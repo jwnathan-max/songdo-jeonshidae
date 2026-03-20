@@ -1930,56 +1930,52 @@ function autoAssign(subs, mems, prevRotation, ym, prevCounts = {}) {
 
   const resultAssignments = {};
 
-  // 토요일 슬롯 쌍 처리 (공평하게 배정)
-  // sat 날짜별로 1공구/8공구를 한 번에 처리
-  const satDates = new Set();
-  for (const k of Object.keys(slotApplicants)) {
-    if (k.startsWith('sat-aft-')) {
-      const dateStr = k.split('__')[1];
-      satDates.add(dateStr);
-    }
+  // 날짜 순서대로 처리 — 같은 날/같은 주 내에서 leaderCount가 누적되어 골고루 배정됨
+  const slotsByDate = {};
+  for (const sk of Object.keys(slotApplicants)) {
+    const dateStr = sk.split('__')[1];
+    if (!slotsByDate[dateStr]) slotsByDate[dateStr] = [];
+    slotsByDate[dateStr].push(sk);
   }
 
-  // 토요일 날짜별 처리
-  for (const dateStr of satDates) {
-    const k1 = `sat-aft-1__${dateStr}`;
-    const k8 = `sat-aft-8__${dateStr}`;
-    const allApplicants = [...new Set([...(slotApplicants[k1]||[]), ...(slotApplicants[k8]||[])])];
+  for (const dateStr of Object.keys(slotsByDate).sort()) {
+    const slots = slotsByDate[dateStr];
+    const satKeys = slots.filter(s => s.startsWith('sat-aft-'));
+    const normalKeys = slots.filter(s => !s.startsWith('sat-aft-')).sort();
 
-    const satResult = assignSatSlots(allApplicants, mems, assignCount, leaderCount, rotation, dateStr);
-    if (satResult.zone1) resultAssignments[k1] = satResult.zone1;
-    if (satResult.zone8) resultAssignments[k8] = satResult.zone8;
-
-    // 배정 횟수 업데이트
-    [satResult.zone1, satResult.zone8].forEach(zone => {
-      if (!zone) return;
-      zone.teams.forEach(team => {
+    // 일반 슬롯 먼저 (금 새벽 → 금 저녁 등)
+    for (const slotKey of normalKeys) {
+      const [slotId] = slotKey.split('__');
+      const slotDef = ASSIGN_SLOTS.find(s => s.id === slotId);
+      if (!slotDef) continue;
+      const assigned = assignSlot(slotApplicants[slotKey], mems, assignCount, leaderCount, rotation, slotId, MAX_PER_SLOT);
+      resultAssignments[slotKey] = assigned;
+      assigned.teams.forEach(team => {
         team.members?.forEach(x => {
-          if (assignCount[x.name] !== undefined) assignCount[x.name]++;
-          else assignCount[x.name] = 1;
+          assignCount[x.name] = (assignCount[x.name] || 0) + 1;
           if (x.role === 'leader') leaderCount[x.name] = (leaderCount[x.name] || 0) + 1;
         });
       });
-    });
-  }
+    }
 
-  // 일반 슬롯 처리
-  const normalSlotKeys = Object.keys(slotApplicants).filter(k => !k.startsWith('sat-aft-'));
-  for (const slotKey of normalSlotKeys.sort()) {
-    const applicantNames = slotApplicants[slotKey];
-    const [slotId] = slotKey.split('__');
-    const slotDef = ASSIGN_SLOTS.find(s => s.id === slotId);
-    if (!slotDef) continue;
-
-    const assigned = assignSlot(applicantNames, mems, assignCount, leaderCount, rotation, slotId, MAX_PER_SLOT);
-    resultAssignments[slotKey] = assigned;
-    assigned.teams.forEach(team => {
-      team.members?.forEach(x => {
-        if (assignCount[x.name] !== undefined) assignCount[x.name]++;
-        else assignCount[x.name] = 1;
-        if (x.role === 'leader') leaderCount[x.name] = (leaderCount[x.name] || 0) + 1;
+    // 토요일 슬롯 (1공구 + 8공구 함께)
+    if (satKeys.length > 0) {
+      const k1 = `sat-aft-1__${dateStr}`;
+      const k8 = `sat-aft-8__${dateStr}`;
+      const allApplicants = [...new Set([...(slotApplicants[k1]||[]), ...(slotApplicants[k8]||[])])];
+      const satResult = assignSatSlots(allApplicants, mems, assignCount, leaderCount, rotation, dateStr);
+      if (satResult.zone1) resultAssignments[k1] = satResult.zone1;
+      if (satResult.zone8) resultAssignments[k8] = satResult.zone8;
+      [satResult.zone1, satResult.zone8].forEach(zone => {
+        if (!zone) return;
+        zone.teams.forEach(team => {
+          team.members?.forEach(x => {
+            assignCount[x.name] = (assignCount[x.name] || 0) + 1;
+            if (x.role === 'leader') leaderCount[x.name] = (leaderCount[x.name] || 0) + 1;
+          });
+        });
       });
-    });
+    }
   }
 
   // 공평성 보정: 신청했지만 0회 배정된 사람 처리 (다음 배정 우선순위 기록)
@@ -2064,8 +2060,22 @@ function assignSatSlots(applicantNames, mems, assignCount, leaderCount, rotation
 
   const usedLeaders = new Set([leader1?.name, leader8?.name].filter(Boolean));
 
+  const zone1Members = leader1 ? [leader1] : [];
+  const zone8Members = leader8 ? [leader8] : [];
+  const usedNames = new Set([...zone1Members.map(x=>x.name), ...zone8Members.map(x=>x.name)]);
+
+  // 인도자의 배우자가 신청했으면 같은 구역에 우선 배치
+  [{ leader: leader1, zone: zone1Members }, { leader: leader8, zone: zone8Members }].forEach(({ leader, zone }) => {
+    if (!leader?.spouseId) return;
+    const spouseEntry = Object.entries(mems).find(([id]) => id === leader.spouseId);
+    if (!spouseEntry) return;
+    const spouseName = spouseEntry[1].name;
+    const spouseCand = candidates.find(c => c.name === spouseName && !usedNames.has(c.name));
+    if (spouseCand) { zone.push(spouseCand); usedNames.add(spouseName); }
+  });
+
   // 커플 쌍 추출
-  const nonLeaders = candidates.filter(c => !usedLeaders.has(c.name));
+  const nonLeaders = candidates.filter(c => !usedNames.has(c.name));
   const couples = []; // [{a, b}]
   const singles = [];
   const paired = new Set();
@@ -2089,11 +2099,6 @@ function assignSatSlots(applicantNames, mems, assignCount, leaderCount, rotation
     singles.push(m);
   }
   const solos = nonLeaders.filter(c => !paired.has(c.name) && !couples.some(cp => cp.a.name === c.name || cp.b.name === c.name));
-
-  // 총 12명 (각 6명씩) 배정
-  const zone1Members = leader1 ? [leader1] : [];
-  const zone8Members = leader8 ? [leader8] : [];
-  const usedNames = new Set([...zone1Members.map(x=>x.name), ...zone8Members.map(x=>x.name)]);
 
   // 커플을 두 구역에 균등 배분
   let c1 = 0, c8 = 0;
