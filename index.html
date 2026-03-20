@@ -1912,6 +1912,45 @@ async function toggleAssignEdit(ym) {
     const snapC = await db.ref(`confirmedAssignments/${ym}`).get();
     const updates = { [`assignments/${ym}`]: assignments };
     if (snapC.exists()) updates[`confirmedAssignments/${ym}`] = assignments;
+
+    // 배정표에 있는 인원을 submissions에 반영 (수동 추가 포함)
+    const nameToSlots = {}; // name → Set<volSubKey>
+    for (const [slotKey, data] of Object.entries(assignments)) {
+      if (!data?.teams) continue;
+      const volSubKey = slotKey.replace(/^sat-aft-[18]__/, 'sat-aft__');
+      for (const team of data.teams) {
+        for (const x of (team.members || [])) {
+          if (!x.name) continue;
+          if (!nameToSlots[x.name]) nameToSlots[x.name] = new Set();
+          nameToSlots[x.name].add(volSubKey);
+        }
+      }
+    }
+
+    // 현재 submissions 로드 후 누락된 슬롯만 추가
+    const snapSubs = await db.ref(`submissions/${ym}`).get();
+    const allSubs = snapSubs.val() || {};
+    const memberMap = {};
+    for (const [id, m] of Object.entries(members)) memberMap[m.name] = {id, ...m};
+
+    for (const [name, newSlots] of Object.entries(nameToSlots)) {
+      const existing = allSubs[name] || {};
+      const existingSlots = new Set(existing.slots || []);
+      let changed = false;
+      for (const sk of newSlots) {
+        if (!existingSlots.has(sk)) { existingSlots.add(sk); changed = true; }
+      }
+      if (changed) {
+        const mem = memberMap[name];
+        updates[`submissions/${ym}/${name}`] = {
+          slots: [...existingSlots],
+          timestamp: existing.timestamp || Date.now(),
+          gender: existing.gender || mem?.gender || '?',
+          memberId: existing.memberId || mem?.id || '',
+        };
+      }
+    }
+
     await db.ref().update(updates);
   }
   adminAssignListenerYM = null; // 리스너 강제 재설정
@@ -2113,10 +2152,48 @@ async function confirmAssignment(ym) {
   const subs = snapS.val() || {};
   const { assignments: filledAssignments, autoFillCount } = fillVacanciesWithPairing(assignments, subs, members);
 
-  await db.ref().update({
+  const confirmUpdates = {
     [`confirmedAssignments/${ym}`]: filledAssignments,
     [`assignments/${ym}`]: filledAssignments,
-  });
+  };
+
+  // 확정된 배정표 기준으로 submissions 보완 (수동 입력 포함)
+  const snapSubs2 = await db.ref(`submissions/${ym}`).get();
+  const allSubs2 = snapSubs2.val() || {};
+  const memberMap2 = {};
+  for (const [id, m] of Object.entries(members)) memberMap2[m.name] = {id, ...m};
+
+  const nameToSlots2 = {};
+  for (const [slotKey, data] of Object.entries(filledAssignments)) {
+    if (!data?.teams) continue;
+    const volSubKey = slotKey.replace(/^sat-aft-[18]__/, 'sat-aft__');
+    for (const team of data.teams) {
+      for (const x of (team.members || [])) {
+        if (!x.name) continue;
+        if (!nameToSlots2[x.name]) nameToSlots2[x.name] = new Set();
+        nameToSlots2[x.name].add(volSubKey);
+      }
+    }
+  }
+  for (const [name, newSlots] of Object.entries(nameToSlots2)) {
+    const existing = allSubs2[name] || {};
+    const existingSlots = new Set(existing.slots || []);
+    let changed = false;
+    for (const sk of newSlots) {
+      if (!existingSlots.has(sk)) { existingSlots.add(sk); changed = true; }
+    }
+    if (changed) {
+      const mem = memberMap2[name];
+      confirmUpdates[`submissions/${ym}/${name}`] = {
+        slots: [...existingSlots],
+        timestamp: existing.timestamp || Date.now(),
+        gender: existing.gender || mem?.gender || '?',
+        memberId: existing.memberId || mem?.id || '',
+      };
+    }
+  }
+
+  await db.ref().update(confirmUpdates);
   assignments = filledAssignments;
 
   const msg = autoFillCount > 0
