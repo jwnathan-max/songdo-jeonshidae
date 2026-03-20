@@ -734,9 +734,9 @@ async function init() {
     await enterAdminScreen();
     return;
   } else if (savedUser) {
-    const mem = Object.values(members).find(m => m.name === savedUser);
-    if (mem) {
-      currentUser = mem;
+    const found = Object.entries(members).find(([, m]) => m.name === savedUser);
+    if (found) {
+      currentUser = { id: found[0], ...found[1] };
       hide('loadingScreen');
       await enterVolunteerScreen();
       return;
@@ -881,6 +881,7 @@ async function finishVolLogin() {
   loginPendingMember = null;
   isAdmin = false;
   sessionStorage.setItem('volUser', currentUser.name);
+  sessionStorage.removeItem('adminSession'); // 관리자 세션과 충돌 방지
   hide('loginScreen');
   await enterVolunteerScreen();
 }
@@ -928,6 +929,7 @@ async function loginAdmin() {
   isAdmin = true;
   currentUser = null;
   sessionStorage.setItem('adminSession', '1');
+  sessionStorage.removeItem('volUser'); // 봉사자 세션과 충돌 방지
   hide('loginScreen');
   await enterAdminScreen();
 }
