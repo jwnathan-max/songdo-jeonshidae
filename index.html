@@ -1228,19 +1228,44 @@ async function cancelAssignment(ym, slotKey) {
 async function fillVacancy(ym, slotKey) {
   if (!currentUser) return;
 
-  // 배우자가 같은 슬롯에 신청했는지 확인
+  // 현재 슬롯 데이터 로드
+  const snap = await db.ref(`confirmedAssignments/${ym}/${slotKey}`).get();
+  const slotData = snap.val() || {teams: []};
+  const teams = JSON.parse(JSON.stringify(slotData.teams || []));
+  const total = teams.reduce((s,t) => s+(t.members?.length||0), 0);
+  if (total >= MAX_PER_SLOT) { alert('이미 정원이 찼습니다.'); return; }
+  if (teams.some(t => t.members?.some(x => x.name === currentUser.name))) {
+    alert('이미 이 타임에 배정되어 있습니다.'); return;
+  }
+
+  // ── 토요일 오후: 1공구↔8공구 같은 날 중복 신청 방지 ──
+  const isSatAft = /^sat-aft-[18]__/.test(slotKey);
+  let siblingKey = null, sibTeams = [];
+  if (isSatAft) {
+    siblingKey = slotKey.startsWith('sat-aft-1__')
+      ? slotKey.replace('sat-aft-1__', 'sat-aft-8__')
+      : slotKey.replace('sat-aft-8__', 'sat-aft-1__');
+    const snapSib = await db.ref(`confirmedAssignments/${ym}/${siblingKey}`).get();
+    sibTeams = snapSib.val()?.teams || [];
+    if (sibTeams.some(t => t.members?.some(x => x.name === currentUser.name))) {
+      alert('같은 날 다른 공구에 이미 배정되어 있습니다.'); return;
+    }
+  }
+
+  // ── 배우자 확인 ──
   let spouseInfo = null;
   if (currentUser.spouseId && members[currentUser.spouseId]) {
     const spouseMem = members[currentUser.spouseId];
+    const volSlotKey = slotKey.replace(/^sat-aft-[18]__/, 'sat-aft__');
     const snapSpouse = await db.ref(`submissions/${ym}/${spouseMem.name}`).get();
     const spouseSub = snapSpouse.val();
-    if (spouseSub?.slots) {
-      // sat-aft-1/8 ↔ sat-aft 변환하여 일치 여부 확인
-      const volSlotKey = slotKey.replace(/^sat-aft-[18]__/, 'sat-aft__');
-      if (spouseSub.slots.includes(volSlotKey) || spouseSub.slots.includes(slotKey)) {
-        spouseInfo = spouseMem;
-      }
+    let spouseApplied = !!(spouseSub?.slots &&
+      (spouseSub.slots.includes(volSlotKey) || spouseSub.slots.includes(slotKey)));
+    // 배우자가 sibling 슬롯(다른 공구)에 이미 배정됐으면 커플 동반 불가
+    if (spouseApplied && sibTeams.some(t => t.members?.some(x => x.name === spouseMem.name))) {
+      spouseApplied = false;
     }
+    if (spouseApplied) spouseInfo = spouseMem;
   }
 
   const confirmMsg = spouseInfo
@@ -1248,28 +1273,32 @@ async function fillVacancy(ym, slotKey) {
     : '해당 타임에 신청하시겠습니까?';
   if (!confirm(confirmMsg)) return;
 
-  const snap = await db.ref(`confirmedAssignments/${ym}/${slotKey}`).get();
-  const slotData = snap.val() || {teams: []};
-  const teams = JSON.parse(JSON.stringify(slotData.teams || []));
-  const total = teams.reduce((s,t) => s+(t.members?.length||0), 0);
-  if (total >= MAX_PER_SLOT) { alert('이미 정원이 찼습니다.'); return; }
-  const alreadyIn = teams.some(t => t.members?.some(x => x.name === currentUser.name));
-  if (alreadyIn) { alert('이미 이 타임에 배정되어 있습니다.'); return; }
-
-  // 배우자도 미배정 상태이고 자리가 2개 이상이면 커플로 함께 추가
   const spouseInSlot = spouseInfo && teams.some(t => t.members?.some(x => x.name === spouseInfo.name));
+  const myMember = {name:currentUser.name, gender:currentUser.gender, role:'member'};
+
   if (spouseInfo && !spouseInSlot && total + 2 <= MAX_PER_SLOT) {
+    // 커플 팀으로 추가
     teams.push({members:[
-      {name:currentUser.name, gender:currentUser.gender, role:'member'},
-      {name:spouseInfo.name,  gender:spouseInfo.gender,  role:'member'},
+      myMember,
+      {name:spouseInfo.name, gender:spouseInfo.gender, role:'member'},
     ]});
   } else {
-    // 1명짜리 팀에 합류 또는 새 팀 생성
-    const singleTeam = teams.find(t => t.members?.length === 1);
-    if (singleTeam) {
-      singleTeam.members = [...singleTeam.members, {name:currentUser.name, gender:currentUser.gender, role:'member'}];
+    // 팀 합류 우선순위:
+    // 1순위) 내 배우자가 단독으로 있는 팀 (부부 팀 완성)
+    // 2순위) 동성이 단독으로 있는 팀 (동성 짝)
+    // 3순위) 새 팀 생성 (부부 아닌 혼성 팀 방지)
+    const mySpouseName = currentUser.spouseId ? members[currentUser.spouseId]?.name : null;
+    let targetTeam = null;
+    if (mySpouseName) {
+      targetTeam = teams.find(t => t.members?.length === 1 && t.members[0].name === mySpouseName);
+    }
+    if (!targetTeam) {
+      targetTeam = teams.find(t => t.members?.length === 1 && t.members[0].gender === currentUser.gender);
+    }
+    if (targetTeam) {
+      targetTeam.members = [...targetTeam.members, myMember];
     } else {
-      teams.push({members:[{name:currentUser.name, gender:currentUser.gender, role:'member'}]});
+      teams.push({members: [myMember]});
     }
   }
 
@@ -1481,21 +1510,51 @@ async function renderStatusTab(ym) {
   const subs = snap.val() || {};
   submissions = subs;
 
+  // 확정 배정 데이터도 읽어서 배정표 기준으로 신청자 보완
+  const snapC = await db.ref(`confirmedAssignments/${ym}`).get();
+  const confirmed = snapC.val() || {};
+
+  // confirmedAssignments에서 이름→슬롯키 목록 추출
+  const confirmedNameSlots = {}; // name → [slotKey, ...]
+  for (const [slotKey, data] of Object.entries(confirmed)) {
+    if (!data?.teams) continue;
+    for (const team of data.teams) {
+      for (const x of (team.members || [])) {
+        if (!confirmedNameSlots[x.name]) confirmedNameSlots[x.name] = [];
+        if (!confirmedNameSlots[x.name].includes(slotKey))
+          confirmedNameSlots[x.name].push(slotKey);
+      }
+    }
+  }
+
   const memberList = Object.values(members);
   const totalMembers = memberList.length;
   const activeNames = new Set(memberList.map(m => m.name));
-  // 탈퇴한 멤버의 신청 항목은 표시하지 않음
-  const submittedNames = Object.keys(subs).filter(n => activeNames.has(n));
-  const totalSubmitted = submittedNames.length;
-  const notSubmitted = memberList.filter(m => !submittedNames.includes(m.name));
 
-  // 슬롯별 신청자
+  // submissions + confirmedAssignments 합산해서 신청 완료 판단
+  const submittedNamesSet = new Set([
+    ...Object.keys(subs).filter(n => activeNames.has(n)),
+    ...Object.keys(confirmedNameSlots).filter(n => activeNames.has(n)),
+  ]);
+  const totalSubmitted = submittedNamesSet.size;
+  const notSubmitted = memberList.filter(m => !submittedNamesSet.has(m.name));
+
+  // 슬롯별 신청자 (submissions 기준)
   const slotMap = {}; // slotKey → [name,...]
   for (const [name, d] of Object.entries(subs)) {
     if (!d || !d.slots) continue;
     for (const sk of d.slots) {
       if (!slotMap[sk]) slotMap[sk] = [];
       slotMap[sk].push(name);
+    }
+  }
+
+  // confirmedAssignments에서 submissions에 없는 사람 슬롯맵에 추가
+  for (const [name, slotKeys] of Object.entries(confirmedNameSlots)) {
+    if (!activeNames.has(name) || subs[name]) continue; // submissions에 이미 있으면 skip
+    for (const sk of slotKeys) {
+      if (!slotMap[sk]) slotMap[sk] = [];
+      if (!slotMap[sk].includes(name)) slotMap[sk].push(name);
     }
   }
 
@@ -1529,7 +1588,9 @@ async function renderStatusTab(ym) {
       const dayLabel = `${parseInt(mo)}월 ${parseInt(d)}일 (${DAY_LABELS[dt.getDay()]})`;
       html += `<div style="font-size:.8em;font-weight:700;color:#a0aec0;margin:14px 0 6px;text-transform:uppercase">${dayLabel}</div>`;
       for (const {slotId, sk} of items) {
-        const slot = VOL_SLOTS.find(s => s.id === slotId) || {label: slotId, color:'#ddd'};
+        const slot = VOL_SLOTS.find(s => s.id === slotId)
+          || ASSIGN_SLOTS?.find(s => s.id === slotId)
+          || {label: slotId, color:'#ddd'};
         const names = slotMap[sk] || [];
         const full = names.length >= MAX_PER_SLOT;
         html += `<div class="slot-status-item">
@@ -2518,11 +2579,28 @@ async function renderStatsTab(ym) {
 
   const memberList = Object.values(members);
 
-  // 신청 횟수
+  // confirmedAssignments에서 이름→배정 슬롯 수 추출 (배정표 기준 신청 보완용)
+  const confirmedSlotCountByName = {};
+  if (snapC.exists()) {
+    for (const [, data] of Object.entries(asgn)) {
+      if (!data?.teams) continue;
+      for (const team of data.teams) {
+        for (const x of (team.members || [])) {
+          confirmedSlotCountByName[x.name] = (confirmedSlotCountByName[x.name] || 0) + 1;
+        }
+      }
+    }
+  }
+
+  // 신청 횟수: submissions 기준이되, 배정표에만 있는 사람은 배정 횟수로 보완
   const subCount = {};
   for (const m of memberList) subCount[m.name] = 0;
   for (const [name, d] of Object.entries(subs)) {
     subCount[name] = d?.slots?.length || 0;
+  }
+  // submissions에 없지만 confirmedAssignments에 있으면 배정 슬롯 수를 신청 횟수로 반영
+  for (const [name, cnt] of Object.entries(confirmedSlotCountByName)) {
+    if ((subCount[name] ?? -1) === 0 && cnt > 0) subCount[name] = cnt;
   }
 
   // 배정 횟수
