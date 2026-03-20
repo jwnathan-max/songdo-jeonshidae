@@ -1868,14 +1868,26 @@ function fillVacanciesWithPairing(currentAssignments, subs, mems) {
   const result = JSON.parse(JSON.stringify(currentAssignments));
   let autoFillCount = 0;
 
+  // 날짜별로 이미 배정된 인원 추적 (토요일 1공구↔8공구 중복 방지)
+  const dateAssigned = {};
+  for (const [sk, sd] of Object.entries(result)) {
+    const dateStr = sk.split('__')[1];
+    if (!dateAssigned[dateStr]) dateAssigned[dateStr] = new Set();
+    for (const t of (sd.teams || []))
+      for (const m of (t.members || []))
+        if (m.name) dateAssigned[dateStr].add(m.name);
+  }
+
   for (const [slotKey, slotData] of Object.entries(result)) {
     if (!slotData?.teams) continue;
     const teams = slotData.teams;
     const total = teams.reduce((s, t) => s + (t.members?.length || 0), 0);
     if (total >= MAX_PER_SLOT) continue;
 
-    const assignedNames = new Set(teams.flatMap(t => t.members?.map(m => m.name) || []));
-    const unassigned = (slotApplicants[slotKey] || []).filter(n => !assignedNames.has(n));
+    // 같은 날짜의 다른 슬롯에 이미 배정된 사람도 제외
+    const dateStr = slotKey.split('__')[1];
+    const alreadyOnDate = dateAssigned[dateStr] || new Set();
+    const unassigned = (slotApplicants[slotKey] || []).filter(n => !alreadyOnDate.has(n));
     if (unassigned.length === 0) continue;
 
     let vacancies = MAX_PER_SLOT - total;
@@ -1920,6 +1932,10 @@ function fillVacanciesWithPairing(currentAssignments, subs, mems) {
     const newMembers     = [...selected].map(n => ({name: n, gender: memMap[n]?.gender || '?', role: 'member'}));
     result[slotKey] = { ...slotData, teams: buildTeams([...currentMembers, ...newMembers], leaderMember, mems) };
     autoFillCount += selected.size;
+
+    // 이번 슬롯에서 새로 배정된 인원을 날짜 추적에 반영 (이후 슬롯 중복 방지)
+    if (!dateAssigned[dateStr]) dateAssigned[dateStr] = new Set();
+    for (const n of selected) dateAssigned[dateStr].add(n);
   }
 
   return { assignments: result, autoFillCount };
