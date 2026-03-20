@@ -702,6 +702,10 @@ let submissionsListenerYM  = null;
 let adminAssignListenerRef = null;
 let adminAssignListenerCb  = null;
 let adminAssignListenerYM  = null;
+// 실시간 리스너 (관리자 신청현황·통계 탭용)
+let adminSubsListenerRef = null;
+let adminSubsListenerCb  = null;
+let adminSubsListenerYM  = null;
 
 // ──────────────────────────────────────────────
 //  초기화
@@ -962,6 +966,13 @@ function logout() {
     adminAssignListenerCb = null;
     adminAssignListenerYM = null;
   }
+  // 실시간 리스너 해제 (관리자 신청현황·통계 탭용)
+  if (adminSubsListenerRef && adminSubsListenerCb) {
+    adminSubsListenerRef.off('value', adminSubsListenerCb);
+    adminSubsListenerRef = null;
+    adminSubsListenerCb = null;
+    adminSubsListenerYM = null;
+  }
   showLogin();
 }
 
@@ -1087,9 +1098,9 @@ function renderConfirmedScheduleForVol(ym, asgn) {
   ];
 
   let html = `<div class="confirmed-badge">📌 배정이 확정되었습니다.</div>
-<div style="background:#eff6ff;border:1.5px solid #93c5fd;border-radius:10px;padding:10px 16px;font-size:.82em;color:#1e40af;margin-bottom:14px;display:flex;align-items:flex-start;gap:8px;line-height:1.7">
+<div style="background:#f0fdf4;border:1.5px solid #86efac;border-radius:10px;padding:10px 16px;font-size:.82em;color:#166534;margin-bottom:14px;display:flex;align-items:flex-start;gap:8px;line-height:1.7">
   <span style="flex-shrink:0;font-size:1.1em">ℹ️</span>
-  <span>확정 후 수정이 필요하신 경우 <strong>이규원 형제</strong>에게 연락 주시기 바랍니다.<br><strong>📞 010-8977-7768</strong></span>
+  <span>배정된 타임을 취소하거나 빈자리에 신청할 수 있습니다. 변경 사항은 즉시 반영됩니다.</span>
 </div>`;
 
   for (const monStr of sortedWeeks) {
@@ -1145,16 +1156,18 @@ function renderConfirmedScheduleForVol(ym, asgn) {
       html += '</tr>';
     }
 
-    // 빈자리 신청 행
-    const hasAnyVacancy = FIXED_COLS.some((col,ci) => {
+    // 빈자리 신청/취소 행 (빈자리 있거나 내가 배정된 슬롯이 있으면 표시)
+    const hasAnyVacancyOrAssigned = FIXED_COLS.some((col,ci) => {
       const ds = colDates[ci];
       if (ds < monthFirst || ds > monthLast) return false;
       const sk = `${col.id}__${ds}`;
-      const total = asgn[sk]?.teams?.reduce((s,t) => s+(t.members?.length||0), 0) || 0;
-      return total < MAX_PER_SLOT;
+      const teams = asgn[sk]?.teams || [];
+      const total = teams.reduce((s,t) => s+(t.members?.length||0), 0);
+      const userInSlot = teams.some(t => t.members?.some(x => x.name === currentUser?.name));
+      return total < MAX_PER_SLOT || userInSlot;
     });
-    if (hasAnyVacancy) {
-      html += `<tr><td class="result-td-team" style="font-size:.72em;color:#e53e3e;line-height:1.2">빈<br>자리</td>`;
+    if (hasAnyVacancyOrAssigned) {
+      html += `<tr><td class="result-td-team" style="font-size:.72em;color:#718096;line-height:1.2">신청/<br>취소</td>`;
       FIXED_COLS.forEach((col,ci) => {
         const ds = colDates[ci];
         const inMonth = ds >= monthFirst && ds <= monthLast;
@@ -1165,7 +1178,7 @@ function renderConfirmedScheduleForVol(ym, asgn) {
         const userInSlot = teams.some(t => t.members?.some(x => x.name === currentUser?.name));
         html += `<td class="result-td-slot" style="text-align:center;padding:3px 2px">`;
         if (userInSlot) {
-          html += `<div style="font-size:.72em;color:#38a169;font-weight:700">✓배정됨</div>`;
+          html += `<button onclick="cancelAssignment('${ym}','${sk}')" style="background:#fff5f5;color:#e53e3e;border:1px solid #feb2b2;border-radius:7px;padding:4px 3px;font-size:.72em;font-weight:700;cursor:pointer;width:100%;min-height:26px">✓배정<br>취소</button>`;
         } else if (total < MAX_PER_SLOT) {
           html += `<button onclick="fillVacancy('${ym}','${sk}')" style="background:#ebf4ff;color:#2b6cb0;border:none;border-radius:7px;padding:4px 3px;font-size:.72em;font-weight:700;cursor:pointer;width:100%;min-height:26px">신청</button>`;
         } else {
@@ -1179,6 +1192,37 @@ function renderConfirmedScheduleForVol(ym, asgn) {
     html += '</tbody></table></div></div>';
   }
   return html;
+}
+
+async function cancelAssignment(ym, slotKey) {
+  if (!currentUser) return;
+  if (!confirm('이 타임 배정을 취소하시겠습니까?')) return;
+
+  const snap = await db.ref(`confirmedAssignments/${ym}/${slotKey}`).get();
+  const slotData = snap.val() || {teams: []};
+  const teams = JSON.parse(JSON.stringify(slotData.teams || []));
+
+  // 팀에서 현재 사용자 제거 (1명만 남은 팀은 팀 자체 삭제)
+  const newTeams = teams
+    .map(t => ({...t, members: (t.members || []).filter(x => x.name !== currentUser.name)}))
+    .filter(t => t.members && t.members.length > 0);
+
+  // submissions에서도 해당 슬롯 제거
+  const volSubKey = slotKey.replace(/^sat-aft-[18]__/, 'sat-aft__');
+  const snapSub = await db.ref(`submissions/${ym}/${currentUser.name}`).get();
+  const subData = snapSub.val() || {};
+  const newSlots = (subData.slots || []).filter(s => s !== volSubKey && s !== slotKey);
+
+  const updates = {
+    [`confirmedAssignments/${ym}/${slotKey}/teams`]: newTeams,
+    [`assignments/${ym}/${slotKey}/teams`]: newTeams,
+    [`submissions/${ym}/${currentUser.name}/slots`]: newSlots,
+  };
+
+  await db.ref().update(updates);
+  confirmedListenerYM = null;
+  adminAssignListenerYM = null;
+  await volLoadAndRender();
 }
 
 async function fillVacancy(ym, slotKey) {
@@ -1230,10 +1274,41 @@ async function fillVacancy(ym, slotKey) {
   }
 
   // confirmedAssignments와 assignments 둘 다 업데이트 (관리자 뷰 동기화)
-  await db.ref().update({
+  const updates = {
     [`confirmedAssignments/${ym}/${slotKey}/teams`]: teams,
     [`assignments/${ym}/${slotKey}/teams`]: teams,
-  });
+  };
+
+  // submissions에도 기록해서 신청 현황·통계에 반영
+  const volSubKey = slotKey.replace(/^sat-aft-[18]__/, 'sat-aft__');
+
+  const snapMySub = await db.ref(`submissions/${ym}/${currentUser.name}`).get();
+  const mySub = snapMySub.val() || {};
+  const mySlots = mySub.slots ? [...mySub.slots] : [];
+  if (!mySlots.includes(volSubKey)) mySlots.push(volSubKey);
+  updates[`submissions/${ym}/${currentUser.name}`] = {
+    slots: mySlots,
+    timestamp: mySub.timestamp || Date.now(),
+    gender: currentUser.gender,
+    memberId: currentUser.id,
+  };
+
+  // 배우자도 함께 추가된 경우 배우자 submission도 업데이트
+  const addedSpouse = spouseInfo && !spouseInSlot && total + 2 <= MAX_PER_SLOT;
+  if (addedSpouse) {
+    const snapSpouseSub = await db.ref(`submissions/${ym}/${spouseInfo.name}`).get();
+    const spouseSub = snapSpouseSub.val() || {};
+    const spouseSlots = spouseSub.slots ? [...spouseSub.slots] : [];
+    if (!spouseSlots.includes(volSubKey)) spouseSlots.push(volSubKey);
+    updates[`submissions/${ym}/${spouseInfo.name}`] = {
+      slots: spouseSlots,
+      timestamp: spouseSub.timestamp || Date.now(),
+      gender: spouseInfo.gender,
+      memberId: currentUser.spouseId,
+    };
+  }
+
+  await db.ref().update(updates);
   // 리스너가 re-render 트리거 (confirmedListenerYM 리셋해서 강제 재실행)
   confirmedListenerYM = null;
   adminAssignListenerYM = null;
@@ -1392,6 +1467,9 @@ async function adminChangeMonth(dir) {
   const nd = new Date(y, m - 1 + dir, 1);
   adminYM = `${nd.getFullYear()}-${String(nd.getMonth()+1).padStart(2,'0')}`;
   assignEditMode = false;
+  // 월이 바뀌면 리스너 리셋
+  adminAssignListenerYM = null;
+  adminSubsListenerYM = null;
   if (currentAdminTab === 'status') await renderStatusTab(adminYM);
   else if (currentAdminTab === 'assign') await renderAssignTab(adminYM);
   else if (currentAdminTab === 'stats') await renderStatsTab(adminYM);
@@ -1488,6 +1566,8 @@ async function renderStatusTab(ym) {
   </div>`;
 
   document.getElementById('tabStatus').innerHTML = html;
+  setupAdminAssignListener(ym);
+  setupAdminSubsListener(ym);
 }
 
 async function deleteSubmission(ym, name) {
@@ -1540,6 +1620,7 @@ async function renderAssignTab(ym) {
 
   document.getElementById('tabAssign').innerHTML = html;
   setupAdminAssignListener(ym);
+  setupAdminSubsListener(ym);
 }
 
 function setupAdminAssignListener(ym) {
@@ -1550,15 +1631,32 @@ function setupAdminAssignListener(ym) {
   let initialSkip = true;
   adminAssignListenerCb = () => {
     if (initialSkip) { initialSkip = false; return; }
+    if (!isAdmin || document.getElementById('adminScreen').classList.contains('hidden')) return;
     // 수동 수정 중이 아닐 때만 자동 갱신
-    if (isAdmin && currentAdminTab === 'assign' && !assignEditMode &&
-        !document.getElementById('adminScreen').classList.contains('hidden')) {
-      renderAssignTab(ym);
-    }
+    if (currentAdminTab === 'assign' && !assignEditMode) renderAssignTab(ym);
+    else if (currentAdminTab === 'status') renderStatusTab(ym);
+    else if (currentAdminTab === 'stats') renderStatsTab(ym);
   };
   adminAssignListenerRef = db.ref(`confirmedAssignments/${ym}`);
   adminAssignListenerRef.on('value', adminAssignListenerCb);
   adminAssignListenerYM = ym;
+}
+
+function setupAdminSubsListener(ym) {
+  if (adminSubsListenerYM === ym) return;
+  if (adminSubsListenerRef && adminSubsListenerCb) {
+    adminSubsListenerRef.off('value', adminSubsListenerCb);
+  }
+  let initialSkip = true;
+  adminSubsListenerCb = () => {
+    if (initialSkip) { initialSkip = false; return; }
+    if (!isAdmin || document.getElementById('adminScreen').classList.contains('hidden')) return;
+    if (currentAdminTab === 'status') renderStatusTab(ym);
+    else if (currentAdminTab === 'stats') renderStatsTab(ym);
+  };
+  adminSubsListenerRef = db.ref(`submissions/${ym}`);
+  adminSubsListenerRef.on('value', adminSubsListenerCb);
+  adminSubsListenerYM = ym;
 }
 
 function renderAssignCalendar(asgn, ym) {
@@ -2528,6 +2626,8 @@ async function renderStatsTab(ym) {
   html += `</tbody></table></div>`;
 
   document.getElementById('tabStats').innerHTML = html;
+  setupAdminAssignListener(ym);
+  setupAdminSubsListener(ym);
 }
 
 // ── 탭4: 봉사자 관리 ──
