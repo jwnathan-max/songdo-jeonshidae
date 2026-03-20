@@ -1179,7 +1179,27 @@ function renderConfirmedScheduleForVol(ym, asgn) {
 
 async function fillVacancy(ym, slotKey) {
   if (!currentUser) return;
-  if (!confirm('해당 타임에 신청하시겠습니까?')) return;
+
+  // 배우자가 같은 슬롯에 신청했는지 확인
+  let spouseInfo = null;
+  if (currentUser.spouseId && members[currentUser.spouseId]) {
+    const spouseMem = members[currentUser.spouseId];
+    const snapSpouse = await db.ref(`submissions/${ym}/${spouseMem.name}`).get();
+    const spouseSub = snapSpouse.val();
+    if (spouseSub?.slots) {
+      // sat-aft-1/8 ↔ sat-aft 변환하여 일치 여부 확인
+      const volSlotKey = slotKey.replace(/^sat-aft-[18]__/, 'sat-aft__');
+      if (spouseSub.slots.includes(volSlotKey) || spouseSub.slots.includes(slotKey)) {
+        spouseInfo = spouseMem;
+      }
+    }
+  }
+
+  const confirmMsg = spouseInfo
+    ? `배우자(${spouseInfo.name})도 같은 타임에 신청되어 있습니다.\n커플로 함께 배정하시겠습니까?`
+    : '해당 타임에 신청하시겠습니까?';
+  if (!confirm(confirmMsg)) return;
+
   const snap = await db.ref(`confirmedAssignments/${ym}/${slotKey}`).get();
   const slotData = snap.val() || {teams: []};
   const teams = JSON.parse(JSON.stringify(slotData.teams || []));
@@ -1187,13 +1207,24 @@ async function fillVacancy(ym, slotKey) {
   if (total >= MAX_PER_SLOT) { alert('이미 정원이 찼습니다.'); return; }
   const alreadyIn = teams.some(t => t.members?.some(x => x.name === currentUser.name));
   if (alreadyIn) { alert('이미 이 타임에 배정되어 있습니다.'); return; }
-  // 1명짜리 팀에 합류 또는 새 팀 생성
-  const singleTeam = teams.find(t => t.members?.length === 1);
-  if (singleTeam) {
-    singleTeam.members = [...singleTeam.members, {name:currentUser.name, gender:currentUser.gender, role:'member'}];
+
+  // 배우자도 미배정 상태이고 자리가 2개 이상이면 커플로 함께 추가
+  const spouseInSlot = spouseInfo && teams.some(t => t.members?.some(x => x.name === spouseInfo.name));
+  if (spouseInfo && !spouseInSlot && total + 2 <= MAX_PER_SLOT) {
+    teams.push({members:[
+      {name:currentUser.name, gender:currentUser.gender, role:'member'},
+      {name:spouseInfo.name,  gender:spouseInfo.gender,  role:'member'},
+    ]});
   } else {
-    teams.push({members:[{name:currentUser.name, gender:currentUser.gender, role:'member'}]});
+    // 1명짜리 팀에 합류 또는 새 팀 생성
+    const singleTeam = teams.find(t => t.members?.length === 1);
+    if (singleTeam) {
+      singleTeam.members = [...singleTeam.members, {name:currentUser.name, gender:currentUser.gender, role:'member'}];
+    } else {
+      teams.push({members:[{name:currentUser.name, gender:currentUser.gender, role:'member'}]});
+    }
   }
+
   // confirmedAssignments와 assignments 둘 다 업데이트 (관리자 뷰 동기화)
   await db.ref().update({
     [`confirmedAssignments/${ym}/${slotKey}/teams`]: teams,
@@ -1738,12 +1769,17 @@ async function openNamePicker(slotKey, teamIdx, memberIdx, currentName) {
     try { await loadMembers(); } catch(e) { console.error(e); }
   }
 
-  const list = Object.values(members).sort((a,b) => {
+  // 팀1 첫 번째 자리(인도자석)는 canLead 인원만 표시
+  const isLeaderSlot = (editingTeamIdx === 0 && editingMemberIdx === 0);
+  let list = Object.values(members);
+  if (isLeaderSlot) list = list.filter(m => m.canLead);
+  list.sort((a,b) => {
     if (a.gender !== b.gender) return a.gender === '형제' ? -1 : 1;
     return a.name.localeCompare(b.name, 'ko');
   });
 
-  let html = `<div class="name-picker-item" style="grid-column:1/-1;background:#fff5f5;color:#e53e3e;border-color:#fed7d7" onclick="clearSlotMember()">✕ 빈자리로 설정</div>`;
+  const leaderNote = isLeaderSlot ? `<div style="grid-column:1/-1;font-size:.75em;color:#805ad5;padding:4px 6px;background:#faf5ff;border-radius:6px;margin-bottom:4px">★ 인도자 자격자만 표시됩니다</div>` : '';
+  let html = leaderNote + `<div class="name-picker-item" style="grid-column:1/-1;background:#fff5f5;color:#e53e3e;border-color:#fed7d7" onclick="clearSlotMember()">✕ 빈자리로 설정</div>`;
   for (const m of list) {
     const cls = m.gender === '형제' ? 'brother' : 'sister';
     html += `<div class="name-picker-item ${cls}" onclick="pickName('${m.name}','${m.gender}')">${m.name}</div>`;
@@ -1761,7 +1797,20 @@ function pickName(name, gender) {
   if (!teams[editingTeamIdx].members) teams[editingTeamIdx].members = [];
   const team = teams[editingTeamIdx];
   const oldMember = team.members[editingMemberIdx] || {};
-  team.members[editingMemberIdx] = { ...oldMember, name, gender, role: oldMember.role || 'member' };
+
+  // 팀1 첫 번째 자리는 항상 인도자 — 기존 인도자 역할 해제 후 신규 인도자 지정
+  const isLeaderSlot = (editingTeamIdx === 0 && editingMemberIdx === 0);
+  if (isLeaderSlot) {
+    // 같은 슬롯 내 기존 인도자 role → 'member' 로 변경
+    for (const t of teams) {
+      for (const m of (t.members || [])) {
+        if (m.role === 'leader') m.role = 'member';
+      }
+    }
+  }
+
+  const role = isLeaderSlot ? 'leader' : (oldMember.role || 'member');
+  team.members[editingMemberIdx] = { ...oldMember, name, gender, role };
   closeNamePicker();
   document.getElementById('assignResultArea').innerHTML = renderAssignCalendar(assignments, adminYM);
 }
@@ -1790,11 +1839,110 @@ function closeNamePickerOutside(e) {
   if (e.target === document.getElementById('namePickerModal')) closeNamePicker();
 }
 
+// ── 확정 시 빈자리 자동 짝배정 ──
+// 빈자리가 있는 슬롯에 미배정 신청자를 커플 우선 → 동성 쌍 순서로 채워 넣는다
+function fillVacanciesWithPairing(currentAssignments, subs, mems) {
+  // submissions → 슬롯별 신청자 이름 목록
+  const slotApplicants = {};
+  for (const [name, d] of Object.entries(subs)) {
+    if (!d?.slots) continue;
+    for (const volSlotKey of d.slots) {
+      const [volSlotId, dateStr] = volSlotKey.split('__');
+      if (volSlotId === 'sat-aft') {
+        ['sat-aft-1', 'sat-aft-8'].forEach(sid => {
+          const k = `${sid}__${dateStr}`;
+          if (!slotApplicants[k]) slotApplicants[k] = [];
+          if (!slotApplicants[k].includes(name)) slotApplicants[k].push(name);
+        });
+      } else {
+        if (!slotApplicants[volSlotKey]) slotApplicants[volSlotKey] = [];
+        if (!slotApplicants[volSlotKey].includes(name)) slotApplicants[volSlotKey].push(name);
+      }
+    }
+  }
+
+  const memMap = {};
+  for (const [id, m] of Object.entries(mems)) memMap[m.name] = { id, ...m };
+
+  const result = JSON.parse(JSON.stringify(currentAssignments));
+  let autoFillCount = 0;
+
+  for (const [slotKey, slotData] of Object.entries(result)) {
+    if (!slotData?.teams) continue;
+    const teams = slotData.teams;
+    const total = teams.reduce((s, t) => s + (t.members?.length || 0), 0);
+    if (total >= MAX_PER_SLOT) continue;
+
+    const assignedNames = new Set(teams.flatMap(t => t.members?.map(m => m.name) || []));
+    const unassigned = (slotApplicants[slotKey] || []).filter(n => !assignedNames.has(n));
+    if (unassigned.length === 0) continue;
+
+    let vacancies = MAX_PER_SLOT - total;
+    const selected = new Set();
+
+    // 1) 커플 우선: 배우자가 같은 슬롯에 신청했으면 함께 선발
+    const checkedCouple = new Set();
+    for (const name of unassigned) {
+      if (selected.has(name) || checkedCouple.has(name) || vacancies < 2) continue;
+      checkedCouple.add(name);
+      const mem = memMap[name];
+      if (!mem?.spouseId) continue;
+      const spouseEntry = Object.entries(mems).find(([id]) => id === mem.spouseId);
+      if (!spouseEntry) continue;
+      const spouseName = spouseEntry[1].name;
+      if (unassigned.includes(spouseName) && !selected.has(spouseName)) {
+        selected.add(name); selected.add(spouseName); vacancies -= 2;
+      }
+    }
+
+    // 2) 동성 쌍 (형제+형제, 자매+자매)
+    const brothers = unassigned.filter(n => !selected.has(n) && memMap[n]?.gender === '형제');
+    const sisters  = unassigned.filter(n => !selected.has(n) && memMap[n]?.gender === '자매');
+    for (let i = 0; i + 1 < brothers.length && vacancies >= 2; i += 2) {
+      selected.add(brothers[i]); selected.add(brothers[i + 1]); vacancies -= 2;
+    }
+    for (let i = 0; i + 1 < sisters.length && vacancies >= 2; i += 2) {
+      selected.add(sisters[i]); selected.add(sisters[i + 1]); vacancies -= 2;
+    }
+
+    // 3) 홀수 남은 경우 한 명씩 추가
+    const leftBros = brothers.filter(n => !selected.has(n));
+    const leftSis  = sisters.filter(n => !selected.has(n));
+    if (vacancies > 0 && leftBros.length > 0) { selected.add(leftBros[0]); vacancies--; }
+    if (vacancies > 0 && leftSis.length  > 0) { selected.add(leftSis[0]);  vacancies--; }
+
+    if (selected.size === 0) continue;
+
+    // 기존 배정 + 신규 선발 → buildTeams로 팀 재구성 (커플·동성 짝짓기 포함)
+    const currentMembers = teams.flatMap(t => t.members || []);
+    const leaderMember   = currentMembers.find(m => m.role === 'leader') || null;
+    const newMembers     = [...selected].map(n => ({name: n, gender: memMap[n]?.gender || '?', role: 'member'}));
+    result[slotKey] = { ...slotData, teams: buildTeams([...currentMembers, ...newMembers], leaderMember, mems) };
+    autoFillCount += selected.size;
+  }
+
+  return { assignments: result, autoFillCount };
+}
+
 // ── 배정 확정 ──
 async function confirmAssignment(ym) {
   if (!confirm(`${ymToLabel(ym)} 배정을 확정하시겠습니까?\n확정 후 통계에 반영됩니다.`)) return;
-  await db.ref(`confirmedAssignments/${ym}`).set(assignments);
-  alert('배정이 확정되었습니다.');
+
+  // 빈자리 자동 짝배정: 미배정 신청자를 커플/동성 쌍으로 채운다
+  const snapS = await db.ref(`submissions/${ym}`).get();
+  const subs = snapS.val() || {};
+  const { assignments: filledAssignments, autoFillCount } = fillVacanciesWithPairing(assignments, subs, members);
+
+  await db.ref().update({
+    [`confirmedAssignments/${ym}`]: filledAssignments,
+    [`assignments/${ym}`]: filledAssignments,
+  });
+  assignments = filledAssignments;
+
+  const msg = autoFillCount > 0
+    ? `배정이 확정되었습니다.\n빈자리에 ${autoFillCount}명이 자동으로 짝배정되었습니다.`
+    : '배정이 확정되었습니다.';
+  alert(msg);
   await renderAssignTab(ym);
 }
 
@@ -2214,14 +2362,24 @@ function buildTeams(allMembers, leader, mems) {
     pairs.unshift(lp);
   }
 
-  // 4) 팀 객체로 변환 (최대 3팀)
-  return pairs.slice(0, 3).map(pair => ({
-    members: pair.map(m => m ? {
-      name: m.name,
-      gender: m.gender,
-      role: leader && m.name === leader.name ? 'leader' : 'member'
-    } : null).filter(Boolean)
-  }));
+  // 4) 팀 객체로 변환 (최대 3팀) — 혼성 팀은 언제나 형제 먼저
+  return pairs.slice(0, 3).map(pair => {
+    const members = pair.filter(Boolean);
+    members.sort((a, b) => {
+      const ga = memMap[a.name]?.gender || a.gender;
+      const gb = memMap[b.name]?.gender || b.gender;
+      if (ga === '형제' && gb === '자매') return -1;
+      if (ga === '자매' && gb === '형제') return 1;
+      return 0;
+    });
+    return {
+      members: members.map(m => ({
+        name: m.name,
+        gender: m.gender,
+        role: leader && m.name === leader.name ? 'leader' : 'member'
+      }))
+    };
+  });
 }
 
 function chunkArr(arr, size) {
