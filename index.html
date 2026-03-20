@@ -1800,11 +1800,10 @@ async function confirmAssignment(ym) {
 
 // ── 배정 초기화 ──
 async function resetAssignment(ym) {
-  if (!confirm(`⚠️ ${ymToLabel(ym)} 전체를 초기화합니다.\n배정 결과 + 신청 현황이 모두 삭제됩니다.\n되돌릴 수 없습니다. 계속하시겠습니까?`)) return;
+  if (!confirm(`⚠️ ${ymToLabel(ym)} 배정을 초기화합니다.\n배정 결과만 삭제됩니다 (신청 현황은 유지).\n되돌릴 수 없습니다. 계속하시겠습니까?`)) return;
   await db.ref().update({
     [`assignments/${ym}`]: null,
     [`confirmedAssignments/${ym}`]: null,
-    [`submissions/${ym}`]: null,
     [`rotation/${ym}`]: null,
   });
   assignments = {};
@@ -1922,6 +1921,9 @@ function autoAssign(subs, mems, prevRotation, ym, prevCounts = {}) {
     assignCount[m.name] = (prevCounts[m.name] || 0) * 0.5; // 이전 달은 50% 가중치
   }
 
+  // 인도자 배정 횟수 (이번 달 내에서 골고루 분배용)
+  const leaderCount = {};
+
   // 인도자 로테이션
   const rotation = { ...prevRotation };
   if (!rotation.lastLeaderIdx) rotation.lastLeaderIdx = {};
@@ -1944,7 +1946,7 @@ function autoAssign(subs, mems, prevRotation, ym, prevCounts = {}) {
     const k8 = `sat-aft-8__${dateStr}`;
     const allApplicants = [...new Set([...(slotApplicants[k1]||[]), ...(slotApplicants[k8]||[])])];
 
-    const satResult = assignSatSlots(allApplicants, mems, assignCount, rotation, dateStr);
+    const satResult = assignSatSlots(allApplicants, mems, assignCount, leaderCount, rotation, dateStr);
     if (satResult.zone1) resultAssignments[k1] = satResult.zone1;
     if (satResult.zone8) resultAssignments[k8] = satResult.zone8;
 
@@ -1955,6 +1957,7 @@ function autoAssign(subs, mems, prevRotation, ym, prevCounts = {}) {
         team.members?.forEach(x => {
           if (assignCount[x.name] !== undefined) assignCount[x.name]++;
           else assignCount[x.name] = 1;
+          if (x.role === 'leader') leaderCount[x.name] = (leaderCount[x.name] || 0) + 1;
         });
       });
     });
@@ -1968,12 +1971,13 @@ function autoAssign(subs, mems, prevRotation, ym, prevCounts = {}) {
     const slotDef = ASSIGN_SLOTS.find(s => s.id === slotId);
     if (!slotDef) continue;
 
-    const assigned = assignSlot(applicantNames, mems, assignCount, rotation, slotId, MAX_PER_SLOT);
+    const assigned = assignSlot(applicantNames, mems, assignCount, leaderCount, rotation, slotId, MAX_PER_SLOT);
     resultAssignments[slotKey] = assigned;
     assigned.teams.forEach(team => {
       team.members?.forEach(x => {
         if (assignCount[x.name] !== undefined) assignCount[x.name]++;
         else assignCount[x.name] = 1;
+        if (x.role === 'leader') leaderCount[x.name] = (leaderCount[x.name] || 0) + 1;
       });
     });
   }
@@ -1986,7 +1990,7 @@ function autoAssign(subs, mems, prevRotation, ym, prevCounts = {}) {
   return { assignments: resultAssignments, rotation };
 }
 
-function assignSlot(applicantNames, mems, assignCount, rotation, slotId, maxCount) {
+function assignSlot(applicantNames, mems, assignCount, leaderCount, rotation, slotId, maxCount) {
   const memMap = {};
   for (const [id, m] of Object.entries(mems)) memMap[m.name] = { id, ...m };
 
@@ -2002,14 +2006,17 @@ function assignSlot(applicantNames, mems, assignCount, rotation, slotId, maxCoun
     return (assignCount[a.name] || 0) - (assignCount[b.name] || 0);
   });
 
-  // 인도자 배정
+  // 인도자 배정 — 이번 달 인도 횟수 적은 순 우선, 동순위면 로테이션
   let leader = null;
   const leaderCandidates = candidates.filter(c => c.gender === '형제' && c.canLead);
   if (leaderCandidates.length > 0) {
-    // 배정 횟수 적은 순, 동순위면 로테이션
-    leaderCandidates.sort((a, b) => (assignCount[a.name]||0) - (assignCount[b.name]||0));
-    const minCount = assignCount[leaderCandidates[0].name] || 0;
-    const tied = leaderCandidates.filter(c => (assignCount[c.name]||0) === minCount);
+    leaderCandidates.sort((a, b) => {
+      const laDiff = (leaderCount[a.name]||0) - (leaderCount[b.name]||0);
+      if (laDiff !== 0) return laDiff;
+      return (assignCount[a.name]||0) - (assignCount[b.name]||0);
+    });
+    const minLeader = leaderCount[leaderCandidates[0].name] || 0;
+    const tied = leaderCandidates.filter(c => (leaderCount[c.name]||0) === minLeader);
     const lastIdx = rotation.lastLeaderIdx?.[slotId] ?? -1;
     const nextIdx = (lastIdx + 1) % tied.length;
     leader = tied[nextIdx];
@@ -2034,15 +2041,17 @@ function assignSlot(applicantNames, mems, assignCount, rotation, slotId, maxCoun
   return { teams };
 }
 
-function assignSatSlots(applicantNames, mems, assignCount, rotation, dateStr) {
+function assignSatSlots(applicantNames, mems, assignCount, leaderCount, rotation, dateStr) {
   const memMap = {};
   for (const [id, m] of Object.entries(mems)) memMap[m.name] = { id, ...m };
   const candidates = applicantNames.map(n => memMap[n]).filter(Boolean);
   const priority = rotation.priorityNext || [];
 
-  // 인도자 배정 (1공구, 8공구 각각)
+  // 인도자 배정 (1공구, 8공구 각각) — 이번 달 인도 횟수 적은 순 우선
   const leaderCandidates = candidates.filter(c => c.gender === '형제' && c.canLead);
   leaderCandidates.sort((a, b) => {
+    const laDiff = (leaderCount[a.name]||0) - (leaderCount[b.name]||0);
+    if (laDiff !== 0) return laDiff;
     const pa = priority.includes(a.name) ? 0 : 1;
     const pb = priority.includes(b.name) ? 0 : 1;
     if (pa !== pb) return pa - pb;
