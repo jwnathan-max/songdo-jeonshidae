@@ -1,0 +1,2824 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>전시대 봉사 신청</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗓️</text></svg>">
+
+<!-- Firebase CDN -->
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<!-- SheetJS (Excel 파싱) — 여러 CDN 순차 시도 -->
+<script>
+(function(){
+  var urls = [
+    'https://unpkg.com/xlsx@0.20.3/dist/xlsx.full.min.js',
+    'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
+    'https://cdn.jsdelivr.net/npm/xlsx@0.20.3/dist/xlsx.full.min.js'
+  ];
+  function tryLoad(i) {
+    if (i >= urls.length) return;
+    var s = document.createElement('script');
+    s.src = urls[i];
+    s.onerror = function() { tryLoad(i + 1); };
+    document.head.appendChild(s);
+  }
+  tryLoad(0);
+})();
+</script>
+
+<style>
+/* ── 기본 리셋 & 모바일 기반 ── */
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html{-webkit-text-size-adjust:100%}
+body{
+  font-family:-apple-system,'Apple SD Gothic Neo','맑은 고딕','Malgun Gothic',sans-serif;
+  background:#f0f2f5;color:#2d3748;
+  font-size:16px; /* iOS 줌 방지 (16px 미만이면 입력 시 자동 줌됨) */
+  min-height:100vh;
+  -webkit-font-smoothing:antialiased;
+}
+
+/* ── 공통 ── */
+.hidden{display:none!important}
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  padding:12px 18px;border:none;border-radius:12px;cursor:pointer;
+  font-size:.9em;font-weight:700;transition:background .15s,transform .1s;
+  white-space:nowrap;touch-action:manipulation;
+  min-height:44px; /* iOS 최소 터치 타깃 */
+}
+.btn:active{transform:scale(.95)}
+.btn-primary{background:#5a67d8;color:#fff}
+.btn-primary:active{background:#4c51bf}
+.btn-success{background:#38a169;color:#fff}
+.btn-success:active{background:#2f855a}
+.btn-danger{background:#e53e3e;color:#fff}
+.btn-gray{background:#e2e8f0;color:#4a5568}
+.btn-gray:active{background:#cbd5e0}
+.btn-orange{background:#ed8936;color:#fff}
+
+/* 입력 필드 — font-size 16px로 iOS 줌 완전 방지 */
+input[type=text],input[type=password],select{
+  width:100%;padding:13px 14px;
+  border:1.5px solid #e2e8f0;border-radius:12px;
+  font-size:16px;outline:none;
+  transition:border .18s;background:#fff;
+  -webkit-appearance:none;appearance:none;
+}
+input:focus,select:focus{border-color:#5a67d8;box-shadow:0 0 0 3px rgba(90,103,216,.12)}
+
+.card{background:#fff;border-radius:16px;box-shadow:0 2px 12px rgba(0,0,0,.07);overflow:hidden}
+.card-header{padding:13px 16px;font-weight:700;font-size:.95em;color:#4a5568;border-bottom:1.5px solid #edf2f7;background:#f8fafc;display:flex;align-items:center;gap:8px}
+.badge{display:inline-block;padding:3px 9px;border-radius:99px;font-size:.75em;font-weight:700}
+.badge-b{background:#ebf8ff;color:#2b6cb0}
+.badge-s{background:#fff5f7;color:#c53030}
+.badge-g{background:#f0fff4;color:#276749}
+.badge-y{background:#fffbeb;color:#744210}
+
+/* ── 로딩 ── */
+#loadingScreen{position:fixed;inset:0;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999}
+.spinner{width:44px;height:44px;border:4px solid #e9ecef;border-top-color:#5a67d8;border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── 로그인 화면 ── */
+#loginScreen{
+  min-height:100vh;display:flex;align-items:center;justify-content:center;
+  padding:20px;padding-bottom:calc(20px + env(safe-area-inset-bottom));
+}
+.login-box{width:100%;max-width:400px}
+.login-logo{text-align:center;margin-bottom:24px}
+.login-logo h1{font-size:1.7em;font-weight:800;color:#5a67d8;letter-spacing:-.5px}
+.login-logo p{font-size:.88em;color:#a0aec0;margin-top:5px}
+.login-card{background:#fff;border-radius:22px;padding:28px 22px;box-shadow:0 8px 32px rgba(90,103,216,.15)}
+.login-card h2{font-size:1em;font-weight:700;margin-bottom:16px;color:#2d3748}
+.form-group{margin-bottom:14px}
+.form-group label{display:block;font-size:.8em;font-weight:700;color:#718096;margin-bottom:6px;letter-spacing:.3px;text-transform:uppercase}
+.error-msg{color:#e53e3e;font-size:.83em;margin-top:8px;padding:10px 13px;background:#fff5f5;border-radius:10px;border:1px solid #fed7d7;display:none;line-height:1.5}
+.error-msg.show{display:block}
+.login-divider{text-align:center;margin:18px 0;color:#a0aec0;font-size:.8em;position:relative}
+.login-divider::before,.login-divider::after{content:'';position:absolute;top:50%;width:36%;height:1px;background:#e2e8f0}
+.login-divider::before{left:0}.login-divider::after{right:0}
+
+/* ── 봉사자 헤더 ── */
+#volunteerScreen{min-height:100vh;padding-bottom:calc(74px + env(safe-area-inset-bottom))}
+.vol-header{
+  background:linear-gradient(135deg,#5a67d8,#7c3aed);color:#fff;
+  padding:14px 16px;padding-top:calc(14px + env(safe-area-inset-top));
+  display:flex;align-items:center;justify-content:space-between;
+  position:sticky;top:0;z-index:100;
+}
+.vol-header h1{font-size:1.05em;font-weight:800}
+.vol-header .user-name{font-size:.82em;opacity:.9;margin-top:2px}
+.vol-content{padding:10px;max-width:600px;margin:0 auto}
+.month-nav{
+  display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:10px;background:#fff;border-radius:14px;
+  padding:10px 14px;box-shadow:0 1px 6px rgba(0,0,0,.06);
+}
+.month-nav h2{font-size:1em;font-weight:800;color:#2d3748}
+.month-nav-btn{
+  background:none;border:none;font-size:1.4em;cursor:pointer;
+  color:#5a67d8;padding:6px 10px;border-radius:10px;
+  min-width:44px;min-height:44px;display:flex;align-items:center;justify-content:center;
+  touch-action:manipulation;
+}
+.month-nav-btn:active{background:#ebf4ff}
+
+/* 신청 완료 배너 */
+.submit-success{
+  display:flex;align-items:center;gap:12px;
+  padding:14px 16px;background:#f0fff4;
+  border-radius:14px;margin-bottom:10px;
+  border:1.5px solid #9ae6b4;
+}
+.submit-success-icon{font-size:1.5em;flex-shrink:0}
+.submit-success-text strong{display:block;font-size:.92em;color:#276749}
+.submit-success-text span{font-size:.8em;color:#48bb78}
+
+/* ── 달력 ── */
+.cal-wrap{background:#fff;border-radius:16px;box-shadow:0 2px 10px rgba(0,0,0,.07);overflow:hidden;margin-bottom:10px}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr)}
+.cal-dow{
+  text-align:center;font-size:.72em;font-weight:800;
+  padding:9px 2px;background:#f8fafc;color:#718096;
+  border-bottom:1px solid #edf2f7;
+}
+.cal-dow:first-child{color:#e53e3e}
+.cal-dow:last-child{color:#3182ce}
+.cal-cell{
+  border-top:1px solid #f0f4f8;border-right:1px solid #f0f4f8;
+  padding:5px 3px 4px;
+  display:flex;flex-direction:column;gap:3px;
+  min-height:62px;
+}
+.cal-cell:nth-child(7n){border-right:none}
+.cal-cell.empty{background:#fafafa}
+.cal-date{
+  font-size:.75em;font-weight:700;text-align:center;
+  width:24px;height:24px;line-height:24px;border-radius:50%;
+  margin:0 auto 1px;flex-shrink:0;color:#2d3748;
+}
+.cal-cell.sun .cal-date{color:#e53e3e}
+.cal-cell.sat .cal-date{color:#3182ce}
+.cal-cell.today .cal-date{background:#5a67d8;color:#fff}
+.cal-cell.other-month .cal-date{color:#cbd5e0}
+
+/* 슬롯 칩 — 충분한 터치 타깃 */
+.cal-slot-chip{
+  font-size:.68em;font-weight:700;
+  border-radius:5px;padding:3px 2px;
+  cursor:pointer;text-align:center;line-height:1.4;
+  border:1.5px solid transparent;
+  transition:transform .1s,filter .1s;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  user-select:none;touch-action:manipulation;
+  min-height:22px;display:flex;align-items:center;justify-content:center;
+}
+.cal-slot-chip.on{
+  filter:brightness(.82);border-color:rgba(0,0,0,.18);
+  box-shadow:inset 0 1px 3px rgba(0,0,0,.12);
+}
+.cal-slot-chip:active{transform:scale(.88)}
+
+/* 선택 내역 패널 */
+.selected-panel{background:#fff;border-radius:14px;box-shadow:0 1px 6px rgba(0,0,0,.06);padding:14px;margin-bottom:10px}
+.selected-panel-title{font-size:.8em;font-weight:700;color:#718096;margin-bottom:10px;text-transform:uppercase;letter-spacing:.3px}
+.selected-chips{display:flex;flex-wrap:wrap;gap:6px}
+.selected-chip{
+  display:inline-flex;align-items:center;gap:5px;
+  border-radius:99px;padding:6px 12px;
+  font-size:.8em;font-weight:700;
+  border:1.5px solid transparent;
+}
+.selected-chip .chip-remove{
+  background:none;border:none;cursor:pointer;
+  font-size:.85em;line-height:1;padding:0;
+  opacity:.6;touch-action:manipulation;
+  min-width:20px;min-height:20px;
+  display:flex;align-items:center;justify-content:center;
+}
+.selected-empty{text-align:center;color:#a0aec0;font-size:.88em;padding:8px}
+
+/* 하단 제출 바 */
+.submit-bar{
+  position:fixed;bottom:0;left:0;right:0;
+  background:#fff;
+  padding:10px 14px;
+  padding-bottom:calc(10px + env(safe-area-inset-bottom));
+  box-shadow:0 -2px 16px rgba(0,0,0,.10);
+  display:flex;gap:10px;z-index:100;
+}
+.submit-bar .btn{flex:1;padding:14px;font-size:.95em;border-radius:14px}
+
+/* ── 관리자 화면 ── */
+#adminScreen{min-height:100vh;padding-bottom:20px}
+.admin-sticky-wrap{position:-webkit-sticky;position:sticky;top:0;z-index:100}
+.admin-header{
+  background:linear-gradient(135deg,#2d3748,#4a5568);color:#fff;
+  padding:14px 16px;padding-top:calc(14px + env(safe-area-inset-top));
+  display:flex;align-items:center;justify-content:space-between;
+}
+.admin-header h1{font-size:1em;font-weight:800}
+.admin-tabs{
+  display:flex;background:#fff;border-bottom:2px solid #e2e8f0;
+  overflow-x:auto;
+  -webkit-overflow-scrolling:touch;scrollbar-width:none;
+}
+.admin-tabs::-webkit-scrollbar{display:none}
+.tab-btn{
+  flex:1;min-width:72px;padding:13px 10px;
+  font-weight:700;font-size:.8em;color:#718096;
+  border:none;background:none;cursor:pointer;
+  border-bottom:2.5px solid transparent;margin-bottom:-2px;
+  white-space:nowrap;transition:color .15s,border-color .15s;
+  touch-action:manipulation;
+}
+.tab-btn.active{color:#5a67d8;border-bottom-color:#5a67d8}
+.admin-content{padding:12px;max-width:900px;margin:0 auto}
+
+/* ── 신청 현황 탭 ── */
+.summary-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+.summary-card{background:#fff;border-radius:14px;padding:16px 12px;text-align:center;box-shadow:0 1px 6px rgba(0,0,0,.06)}
+.summary-num{font-size:2em;font-weight:800;color:#5a67d8;line-height:1}
+.summary-label{font-size:.75em;color:#a0aec0;margin-top:4px}
+.slot-status-item{background:#fff;border-radius:14px;padding:14px;margin-bottom:10px;box-shadow:0 1px 6px rgba(0,0,0,.06)}
+.slot-status-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.slot-status-title{font-weight:700;font-size:.92em;display:flex;align-items:center;gap:8px}
+.slot-members{display:flex;flex-wrap:wrap;gap:6px}
+.member-chip{padding:5px 11px;border-radius:99px;font-size:.8em;font-weight:600}
+.member-chip-b{background:#ebf8ff;color:#2b6cb0}
+.member-chip-s{background:#fff5f7;color:#c53030}
+.not-submitted-list{background:#fff;border-radius:14px;padding:14px;box-shadow:0 1px 6px rgba(0,0,0,.06);margin-top:14px}
+
+/* ── 배정 탭 ── */
+.assign-slot-card{margin-bottom:12px}
+.assign-slot-card .card-header{justify-content:space-between}
+.team-block{padding:12px 14px;border-bottom:1px solid #f0f4f8}
+.team-block:last-child{border-bottom:none}
+.team-label{font-size:.75em;font-weight:700;color:#a0aec0;text-transform:uppercase;letter-spacing:.5px;margin-bottom:7px}
+.team-members{display:flex;flex-wrap:wrap;gap:6px}
+.leader-chip{background:#fffbeb;color:#92400e;border:1.5px solid #f6d860;padding:5px 11px;border-radius:99px;font-size:.8em;font-weight:700}
+.unassigned-section{background:#fff5f5;border:1.5px dashed #fc8181;border-radius:12px;padding:14px;margin-top:12px}
+
+/* ── 통계 탭 ── */
+.stat-table{width:100%;border-collapse:collapse}
+.stat-table th,.stat-table td{padding:10px 12px;text-align:left;border-bottom:1px solid #f0f4f8;font-size:.85em}
+.stat-table th{background:#f8fafc;font-weight:700;color:#4a5568;font-size:.78em;text-transform:uppercase;letter-spacing:.4px}
+.stat-table tr:last-child td{border-bottom:none}
+.bar-wrap{background:#edf2f7;border-radius:99px;height:6px;width:50px;overflow:hidden;display:inline-block;vertical-align:middle;margin-left:6px}
+.bar-fill{height:100%;border-radius:99px;background:linear-gradient(90deg,#667eea,#764ba2)}
+
+/* ── 엑셀 미리보기 ── */
+.excel-preview-tbl{width:100%;border-collapse:collapse;font-size:.8em}
+.excel-preview-tbl th{background:#f8fafc;padding:8px 10px;text-align:left;border-bottom:2px solid #e2e8f0;font-weight:700;color:#4a5568;white-space:nowrap}
+.excel-preview-tbl td{padding:8px 10px;border-bottom:1px solid #f0f4f8;vertical-align:middle}
+.row-ok td:first-child{border-left:3px solid #38a169}
+.row-dup td:first-child{border-left:3px solid #d97706}
+.row-err td:first-child{border-left:3px solid #e53e3e}
+.row-err{background:#fff5f5}
+
+/* ── 봉사자 관리 탭 ── */
+.member-row{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid #f0f4f8;flex-wrap:wrap}
+.member-row:last-child{border-bottom:none}
+.member-name{font-weight:700;min-width:60px;flex-shrink:0;font-size:.95em}
+.member-tags{display:flex;gap:4px;flex-wrap:wrap;flex:1}
+.member-actions{display:flex;gap:6px;flex-shrink:0}
+.member-actions button{
+  padding:7px 12px;font-size:.8em;border-radius:8px;
+  border:none;cursor:pointer;font-weight:700;
+  min-height:36px;touch-action:manipulation;
+}
+.edit-btn{background:#ebf4ff;color:#2b6cb0}
+.del-btn{background:#fff5f5;color:#c53030}
+
+/* ── 모달 ── */
+.modal-overlay{
+  position:fixed;inset:0;background:rgba(0,0,0,.5);
+  display:flex;align-items:flex-end;justify-content:center;z-index:1000;
+}
+.modal-box{
+  background:#fff;border-radius:22px 22px 0 0;
+  padding:22px 18px;
+  padding-bottom:calc(22px + env(safe-area-inset-bottom));
+  width:100%;max-width:520px;max-height:92vh;overflow-y:auto;
+  -webkit-overflow-scrolling:touch;
+}
+.modal-handle{width:40px;height:4px;background:#e2e8f0;border-radius:99px;margin:0 auto 18px}
+.modal-title{font-size:1.05em;font-weight:800;margin-bottom:18px;color:#2d3748}
+.form-row{margin-bottom:16px}
+.form-row label{display:block;font-size:.78em;font-weight:700;color:#718096;margin-bottom:7px;text-transform:uppercase;letter-spacing:.3px}
+.radio-group{display:flex;gap:8px}
+.radio-group label{
+  display:flex;align-items:center;justify-content:center;gap:6px;
+  font-size:.9em;font-weight:700;cursor:pointer;flex:1;
+  background:#f7fafc;padding:11px 10px;border-radius:11px;
+  border:2px solid transparent;transition:all .15s;
+  min-height:44px;touch-action:manipulation;
+}
+.radio-group input[type=radio]{display:none}
+.radio-group input[type=radio]:checked+span{color:#5a67d8}
+.radio-group label:has(input:checked){border-color:#5a67d8;background:#ebf4ff}
+.toggle-group{display:flex;gap:8px}
+.toggle-item{
+  flex:1;background:#f7fafc;border:2px solid transparent;border-radius:11px;
+  padding:11px 10px;text-align:center;cursor:pointer;
+  font-size:.88em;font-weight:700;transition:all .15s;
+  min-height:44px;display:flex;align-items:center;justify-content:center;
+  touch-action:manipulation;
+}
+.toggle-item.on{border-color:#38a169;background:#f0fff4;color:#276749}
+
+/* ── 반응형 ── */
+@media(min-width:600px){
+  .summary-grid{grid-template-columns:repeat(4,1fr)}
+  .modal-overlay{align-items:center}
+  .modal-box{border-radius:22px;max-width:480px;padding-bottom:22px}
+  .tab-btn{flex:0 0 auto;padding:13px 18px}
+  .vol-content{padding:16px}
+  .admin-content{padding:16px}
+}
+@media(max-width:375px){
+  body{font-size:15px}
+  .cal-cell{min-height:56px}
+  .cal-slot-chip{font-size:.62em;padding:2px 1px}
+  .tab-btn{font-size:.75em;padding:12px 8px}
+  .admin-content{padding:10px}
+}
+
+/* ── 배정 결과 달력 ── */
+.result-month-nav{display:flex;align-items:center;justify-content:space-between;background:#fff;border-radius:14px;padding:10px 14px;margin-bottom:12px;box-shadow:0 1px 6px rgba(0,0,0,.06)}
+.result-month-nav h3{font-size:1em;font-weight:800;color:#2d3748}
+.result-date-section{margin-bottom:14px}
+.result-date-header{font-size:.82em;font-weight:800;color:#fff;background:linear-gradient(135deg,#5a67d8,#7c3aed);border-radius:10px;padding:8px 14px;margin-bottom:8px;letter-spacing:-.3px}
+.result-slot-block{background:#fff;border-radius:12px;overflow:hidden;margin-bottom:8px;box-shadow:0 1px 6px rgba(0,0,0,.06)}
+.result-slot-title{font-size:.78em;font-weight:800;padding:8px 14px;border-bottom:1px solid #f0f4f8;display:flex;align-items:center;justify-content:space-between}
+.result-team-row{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:7px 12px;border-bottom:1px solid #f8fafc}
+.result-team-row:last-child{border-bottom:none}
+.result-name-chip{font-size:.88em;font-weight:700;padding:7px 10px;border-radius:9px;background:#f7fafc;color:#2d3748;text-align:center;min-height:36px;display:flex;align-items:center;justify-content:center;cursor:default;transition:background .15s}
+.result-name-chip.leader{background:#fffbeb;color:#92400e;border:1.5px solid #f6d860}
+.result-name-chip.editable{cursor:pointer;border:1.5px dashed #cbd5e0}
+.result-name-chip.editable:active{background:#ebf4ff}
+.result-name-chip.empty{color:#cbd5e0;background:#fafafa;font-style:italic;font-weight:400;font-size:.8em}
+.result-action-bar{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+.result-action-bar .btn{font-size:.85em;padding:10px 14px}
+.confirmed-badge{background:#f0fff4;border:1.5px solid #9ae6b4;border-radius:10px;padding:8px 14px;font-size:.82em;font-weight:700;color:#276749;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+
+/* 이름 선택 모달 */
+.name-picker-list{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px;max-height:300px;overflow-y:auto}
+.name-picker-item{padding:11px 10px;border-radius:10px;background:#f7fafc;font-size:.88em;font-weight:700;cursor:pointer;text-align:center;border:2px solid transparent;touch-action:manipulation}
+.name-picker-item:active{background:#ebf4ff;border-color:#5a67d8}
+.name-picker-item.brother{color:#2b6cb0}
+.name-picker-item.sister{color:#c53030}
+
+/* ── 배정 결과 월간 달력 그리드 ── */
+.result-cal-outer{background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.07);margin-bottom:12px}
+/* 5열 그리드 (일/목 제외: 월화수금토만 표시) */
+.result-cal-grid-5{display:grid;grid-template-columns:repeat(5,1fr)}
+.result-cal-dow{text-align:center;font-size:.82em;font-weight:800;padding:9px 2px;background:#f8fafc;border-bottom:1.5px solid #edf2f7;color:#718096}
+.result-cal-dow.sat{color:#3182ce}
+.result-cal-cell{border-top:1px solid #f0f4f8;border-right:1px solid #f0f4f8;padding:5px 4px;min-height:90px;display:flex;flex-direction:column;gap:2px}
+.result-cal-cell:nth-child(5n){border-right:none}
+.result-cal-cell.empty{background:#fafafa;min-height:65px}
+.result-cal-cell.sat .result-cal-date{color:#3182ce}
+.result-cal-date{font-size:.88em;font-weight:700;text-align:center;width:26px;height:26px;line-height:26px;border-radius:50%;margin:0 auto 3px;flex-shrink:0;color:#2d3748}
+.result-slot-block-sm{border-radius:5px;padding:4px 5px;margin-bottom:3px}
+.result-slot-label-sm{font-size:.74em;font-weight:800;color:#333;margin-bottom:2px;line-height:1.2}
+.result-slot-row-sm{display:flex;gap:3px;margin-bottom:2px}
+.result-name-chip-sm{font-size:.74em;font-weight:700;padding:3px 4px;border-radius:4px;background:rgba(255,255,255,.8);color:#2d3748;flex:1;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;cursor:default}
+.result-name-chip-sm.leader{background:#fffbeb;color:#92400e}
+.result-name-chip-sm.editable{cursor:pointer;outline:1px dashed #999}
+.result-name-chip-sm.editable:active{background:#ebf4ff}
+.result-name-chip-sm.empty-chip{color:#ccc}
+@media(max-width:375px){
+  .result-cal-cell{min-height:78px}
+  .result-slot-label-sm,.result-name-chip-sm{font-size:.65em}
+}
+
+/* ── 배정 결과 주차별 섹션 ── */
+.result-week-section{margin-bottom:28px}
+.result-week-title{font-size:1.05em;font-weight:800;color:#2d3748;margin-bottom:10px;display:flex;align-items:center;gap:6px;padding:0 2px}
+
+/* ── 배정 결과 가로 테이블 뷰 (전체 너비, 스크롤 없음) ── */
+.result-table-wrap{margin-bottom:12px;border-radius:12px;box-shadow:0 2px 10px rgba(0,0,0,.07);overflow:hidden}
+.result-table{border-collapse:collapse;background:#fff;width:100%;table-layout:fixed}
+.result-th-team{padding:10px 2px;text-align:center;font-size:.75em;font-weight:800;color:#718096;background:#f8fafc;border-right:2px solid #e2e8f0;border-bottom:2px solid #e2e8f0;width:30px}
+.result-th-slot{padding:8px 2px;text-align:center;border-right:1px solid rgba(0,0,0,.1);border-bottom:2px solid #e2e8f0;vertical-align:middle}
+.result-th-label{font-size:.85em;font-weight:800;color:#2d3748;line-height:1.35;word-break:keep-all}
+.result-th-date{font-size:.8em;color:#4a5568;margin-top:3px;font-weight:700}
+.result-td-team{text-align:center;font-size:.9em;font-weight:800;color:#4a5568;background:#f8fafc;border-right:2px solid #e2e8f0;border-top:1px solid #edf2f7;padding:10px 2px;width:30px}
+.result-td-slot{padding:5px 2px;border-right:1px solid rgba(0,0,0,.07);border-top:1px solid rgba(0,0,0,.05);vertical-align:middle}
+.result-td-slot:last-child{border-right:none}
+.result-name-row{font-size:.88em;font-weight:700;padding:4px 3px;border-radius:6px;background:rgba(255,255,255,.88);color:#2d3748;margin-bottom:3px;text-align:center;cursor:default;line-height:1.3;word-break:break-all}
+.result-name-row:last-child{margin-bottom:0}
+.result-name-row.leader{background:#fffbeb;color:#92400e}
+.result-name-row.editable{cursor:pointer;border:1px dashed #aaa}
+.result-name-row.editable:active{background:#ebf4ff}
+</style>
+</head>
+<body>
+
+<!-- 로딩 -->
+<div id="loadingScreen">
+  <div class="spinner"></div>
+  <p style="margin-top:16px;color:#a0aec0;font-size:.9em">잠시만 기다려주세요...</p>
+</div>
+
+<!-- 로그인 화면 -->
+<div id="loginScreen" class="hidden">
+  <div class="login-box">
+    <div class="login-logo">
+      <h1>전시대 봉사 신청</h1>
+      <p>송도서부 봉사 신청 시스템</p>
+    </div>
+    <div class="login-card">
+      <!-- Step 1: 이름 입력 -->
+      <div id="loginStepName">
+        <h2>이름으로 입장하기</h2>
+        <div class="form-group">
+          <label>이름</label>
+          <input type="text" id="loginName" placeholder="이름을 입력하세요" autocomplete="off" maxlength="10">
+        </div>
+        <div class="error-msg" id="loginError"></div>
+        <button class="btn btn-primary" style="width:100%;margin-top:4px;padding:13px" onclick="loginVolunteer()">입장하기</button>
+        <div class="login-divider">또는</div>
+        <div class="form-group">
+          <label>관리자 비밀번호</label>
+          <input type="password" id="adminPw" placeholder="관리자 비밀번호 입력" autocomplete="off">
+        </div>
+        <button class="btn btn-gray" style="width:100%;padding:13px" onclick="loginAdmin()">관리자로 입장</button>
+      </div>
+      <!-- Step 2a: PIN 입력 (기존 사용자) -->
+      <div id="loginStepPin" class="hidden">
+        <div style="text-align:center;margin-bottom:20px">
+          <div id="loginPinName" style="font-size:1.05em;font-weight:800;color:#2d3748;margin-bottom:6px"></div>
+          <div style="font-size:.85em;color:#718096">비밀번호(숫자 4자리)를 입력해주세요</div>
+        </div>
+        <div class="form-group">
+          <label>비밀번호</label>
+          <input type="password" id="loginPinInput" placeholder="••••" maxlength="4"
+            inputmode="numeric" pattern="[0-9]*" autocomplete="off"
+            style="text-align:center;font-size:1.5em;letter-spacing:.4em">
+        </div>
+        <div class="error-msg" id="pinError"></div>
+        <button class="btn btn-primary" style="width:100%;margin-top:4px;padding:13px" onclick="submitPinLogin()">확인</button>
+        <button class="btn btn-gray" style="width:100%;margin-top:8px;padding:11px" onclick="backToNameStep()">← 뒤로</button>
+      </div>
+      <!-- Step 2b: PIN 최초 설정 -->
+      <div id="loginStepSetPin" class="hidden">
+        <div style="text-align:center;margin-bottom:20px">
+          <div id="loginSetPinName" style="font-size:1.05em;font-weight:800;color:#2d3748;margin-bottom:6px"></div>
+          <div style="font-size:.85em;color:#718096">처음 입장입니다!<br>개인 비밀번호(숫자 4자리)를 설정해주세요.</div>
+        </div>
+        <div class="form-group">
+          <label>새 비밀번호</label>
+          <input type="password" id="loginNewPin" placeholder="숫자 4자리" maxlength="4"
+            inputmode="numeric" pattern="[0-9]*" autocomplete="new-password"
+            style="text-align:center;font-size:1.5em;letter-spacing:.4em">
+        </div>
+        <div class="form-group">
+          <label>비밀번호 확인</label>
+          <input type="password" id="loginConfirmPin" placeholder="숫자 4자리" maxlength="4"
+            inputmode="numeric" pattern="[0-9]*" autocomplete="new-password"
+            style="text-align:center;font-size:1.5em;letter-spacing:.4em">
+        </div>
+        <div class="error-msg" id="setPinError"></div>
+        <button class="btn btn-primary" style="width:100%;margin-top:4px;padding:13px" onclick="submitSetPin()">설정 완료</button>
+        <button class="btn btn-gray" style="width:100%;margin-top:8px;padding:11px" onclick="backToNameStep()">← 뒤로</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 봉사자 화면 -->
+<div id="volunteerScreen" class="hidden">
+  <div class="vol-header">
+    <div>
+      <h1>전시대 봉사 신청</h1>
+      <div class="user-name" id="volUserName"></div>
+    </div>
+    <button class="btn btn-gray" style="padding:7px 12px;font-size:.82em" onclick="logout()">로그아웃</button>
+  </div>
+  <div class="vol-content">
+    <div class="month-nav">
+      <button class="month-nav-btn" id="volPrevBtn" onclick="volChangeMonth(-1)">◀</button>
+      <h2 id="volMonthTitle"></h2>
+      <button class="month-nav-btn" id="volNextBtn" onclick="volChangeMonth(1)">▶</button>
+    </div>
+    <div id="volSubmitSuccess" class="submit-success hidden">
+      <div class="submit-success-icon">✅</div>
+      <div class="submit-success-text">
+        <strong>신청이 완료되었습니다!</strong>
+        <span>아래에서 수정할 수 있어요.</span>
+      </div>
+    </div>
+    <div id="volSlotsContainer"></div>
+  </div>
+  <div class="submit-bar" id="volSubmitBar">
+    <button class="btn btn-gray" id="volClearBtn" onclick="volClearAll()">전체 해제</button>
+    <button class="btn btn-primary" id="volSubmitBtn" onclick="volSubmit()">신청 완료</button>
+  </div>
+</div>
+
+<!-- 관리자 화면 -->
+<div id="adminScreen" class="hidden">
+  <div class="admin-sticky-wrap">
+    <div class="admin-header">
+      <h1>⚙️ 관리자</h1>
+      <button class="btn btn-gray" style="padding:7px 12px;font-size:.82em" onclick="logout()">로그아웃</button>
+    </div>
+    <div class="admin-tabs">
+      <button class="tab-btn active" onclick="adminTab('status',this)">📋 신청 현황</button>
+      <button class="tab-btn" onclick="adminTab('assign',this)">🎯 배정</button>
+      <button class="tab-btn" onclick="adminTab('stats',this)">📊 통계</button>
+      <button class="tab-btn" onclick="adminTab('members',this)">👥 봉사자 관리</button>
+    </div>
+  </div>
+  <div class="admin-content">
+    <div id="tabStatus"></div>
+    <div id="tabAssign" class="hidden"></div>
+    <div id="tabStats" class="hidden"></div>
+    <div id="tabMembers" class="hidden"></div>
+  </div>
+</div>
+
+<!-- 이름 선택 모달 (수동 수정) -->
+<div class="modal-overlay hidden" id="namePickerModal" onclick="closeNamePickerOutside(event)">
+  <div class="modal-box" style="max-width:420px">
+    <div class="modal-handle"></div>
+    <div class="modal-title">이름 변경</div>
+    <div style="font-size:.83em;color:#718096;margin-bottom:4px" id="namePickerCurrent"></div>
+    <div class="name-picker-list" id="namePickerList"></div>
+    <button class="btn btn-gray" style="width:100%;margin-top:14px" onclick="closeNamePicker()">취소</button>
+  </div>
+</div>
+
+<!-- 엑셀 미리보기 모달 -->
+<div class="modal-overlay hidden" id="excelModal" onclick="closeExcelModalOutside(event)">
+  <div class="modal-box" style="max-width:620px">
+    <div class="modal-title">📂 엑셀 일괄 등록 미리보기</div>
+    <div id="excelPreviewContent"></div>
+    <div style="display:flex;gap:10px;margin-top:16px">
+      <button class="btn btn-gray" style="flex:1" onclick="closeExcelModal()">취소</button>
+      <button class="btn btn-success" style="flex:2" id="excelConfirmBtn" onclick="confirmExcelImport()">등록하기</button>
+    </div>
+  </div>
+</div>
+
+<!-- 숨겨진 파일 인풋 -->
+<input type="file" id="excelFileInput" accept=".xlsx,.xls,.csv"
+  style="position:fixed;top:-100px;left:-100px;width:1px;height:1px;opacity:0;pointer-events:none"
+  onchange="handleExcelFile(event)">
+
+<!-- 봉사자 편집 모달 -->
+<div class="modal-overlay hidden" id="memberModal" onclick="closeMemberModalOutside(event)">
+  <div class="modal-box">
+    <div class="modal-handle"></div>
+    <div class="modal-title" id="modalTitle">봉사자 추가</div>
+    <div class="form-row">
+      <label>이름</label>
+      <input type="text" id="mName" placeholder="이름" maxlength="10">
+    </div>
+    <div class="form-row">
+      <label>성별</label>
+      <div class="radio-group">
+        <label><input type="radio" name="mGender" value="형제" checked><span>형제</span></label>
+        <label><input type="radio" name="mGender" value="자매"><span>자매</span></label>
+      </div>
+    </div>
+    <div class="form-row">
+      <label>인도 가능 여부 (형제만)</label>
+      <div class="toggle-group">
+        <div class="toggle-item" id="tCanLead" onclick="toggleField('canLead')">인도 가능</div>
+        <div class="toggle-item on" id="tCannotLead" onclick="toggleField('cannotLead')">인도 불가</div>
+      </div>
+    </div>
+    <div class="form-row">
+      <label>파이오니아 여부</label>
+      <div class="toggle-group">
+        <div class="toggle-item" id="tIsPioneer" onclick="toggleField('pioneer')">파이오니아</div>
+        <div class="toggle-item on" id="tNotPioneer" onclick="toggleField('notPioneer')">일반 봉사자</div>
+      </div>
+    </div>
+    <div class="form-row">
+      <label>배우자 (부부 연결)</label>
+      <select id="mSpouse">
+        <option value="">없음</option>
+      </select>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:18px">
+      <button class="btn btn-gray" style="flex:1" onclick="closeMemberModal()">취소</button>
+      <button class="btn btn-primary" style="flex:1" onclick="saveMember()">저장</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ──────────────────────────────────────────────
+//  Firebase 설정
+// ──────────────────────────────────────────────
+const firebaseConfig = {
+  apiKey: "AIzaSyB8ZeLUrgUFsO17bC8O35tsssiW2OHISmo",
+  authDomain: "volunteer-schedule-2a270.firebaseapp.com",
+  databaseURL: "https://volunteer-schedule-2a270-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "volunteer-schedule-2a270",
+  storageBucket: "volunteer-schedule-2a270.firebasestorage.app",
+  messagingSenderId: "239743030275",
+  appId: "1:239743030275:web:478aa1d45b41502c922a36"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+// ──────────────────────────────────────────────
+//  상수
+// ──────────────────────────────────────────────
+// 관리자 비밀번호 — SHA-256 해시로 저장 (소스코드에 평문 노출 방지)
+// 현재 비밀번호: 1234 → 변경 시 브라우저 콘솔에서 hashPw('새비밀번호') 실행 후 아래 해시값 교체
+const ADMIN_PW_HASH = '5a8b00dc95535e85f7eeaf9532050aba742f1333b960166d47f094155d4a9df3';
+let adminFailCount = 0;   // 로그인 실패 횟수
+let adminLockUntil = 0;   // 잠금 해제 시각 (ms)
+
+async function hashPw(pw) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pw));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2,'0')).join('');
+}
+const MAX_PER_SLOT = 6;
+const SLOT_COLORS = {
+  '월요일 저녁':'#FFDADA','화요일 저녁':'#FFE4C4','수요일 저녁':'#FFFACC',
+  '금요일 새벽':'#C8EEFF','금요일 저녁':'#C8FFE0',
+  '토요일 오후(1공구)':'#E8C8FF','토요일 오후(8공구)':'#D4AAFF'
+};
+// 봉사자가 신청할 때 보는 슬롯 (토요일은 단일)
+const VOL_SLOTS = [
+  {id:'mon-eve', label:'월요일 저녁', day:1, color:'#FFDADA'},
+  {id:'tue-eve', label:'화요일 저녁', day:2, color:'#FFE4C4'},
+  {id:'wed-eve', label:'수요일 저녁', day:3, color:'#FFFACC'},
+  {id:'fri-dawn', label:'금요일 새벽', day:5, color:'#C8EEFF'},
+  {id:'fri-eve', label:'금요일 저녁', day:5, color:'#C8FFE0'},
+  {id:'sat-aft', label:'토요일 오후', day:6, color:'#E8C8FF'},
+];
+// 배정 시 사용하는 실제 슬롯 (토요일 분리)
+const ASSIGN_SLOTS = [
+  {id:'mon-eve', label:'월요일 저녁', day:1},
+  {id:'tue-eve', label:'화요일 저녁', day:2},
+  {id:'wed-eve', label:'수요일 저녁', day:3},
+  {id:'fri-dawn', label:'금요일 새벽', day:5},
+  {id:'fri-eve', label:'금요일 저녁', day:5},
+  {id:'sat-aft-1', label:'토요일 오후 1공구', day:6, satZone:'1공구'},
+  {id:'sat-aft-8', label:'토요일 오후 8공구', day:6, satZone:'8공구'},
+];
+const DAY_LABELS = ['일','월','화','수','목','금','토'];
+
+// ──────────────────────────────────────────────
+//  전역 상태
+// ──────────────────────────────────────────────
+let members = {};      // { memberId: {name,gender,canLead,isPioneer,spouseId} }
+let currentUser = null; // { id, ...memberData }
+let isAdmin = false;
+let currentYM = '';    // 'YYYY-MM'  (봉사자 화면 기준)
+let volSelectedSlots = new Set(); // 체크된 volSlot ID 세트
+let submissions = {};  // { memberName: {slots:[volSlotId,...], timestamp} }
+let assignments = {};  // { slotId: { teams:[{role,name,gender},...] } }
+let currentAdminTab = 'status';
+let adminYM = '';          // 관리자 선택 월
+let assignEditMode = false; // 수동 수정 모드
+let editingSlotKey = null;  // 수정 중인 슬롯키
+let editingTeamIdx = null;  // 수정 중인 팀 인덱스
+let editingMemberIdx = null;// 수정 중인 멤버 인덱스
+let editingMemberId = null;
+let modalCanLead = false;
+let modalIsPioneer = false;
+// 실시간 리스너 (봉사자용 - 확정 데이터)
+let confirmedListenerRef = null;
+let confirmedListenerCb  = null;
+let confirmedListenerYM  = null;
+// 실시간 리스너 (봉사자용 - 신청 현황)
+let submissionsListenerRef = null;
+let submissionsListenerCb  = null;
+let submissionsListenerYM  = null;
+// 실시간 리스너 (관리자 배정 탭용)
+let adminAssignListenerRef = null;
+let adminAssignListenerCb  = null;
+let adminAssignListenerYM  = null;
+
+// ──────────────────────────────────────────────
+//  초기화
+// ──────────────────────────────────────────────
+async function init() {
+  show('loadingScreen');
+  try {
+    await firebase.auth().signInAnonymously();
+    await Promise.race([
+      loadMembers(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 10000))
+    ]);
+  } catch(e) {
+    console.error('Firebase 연결 오류:', e);
+    document.getElementById('loginError').textContent =
+      'Firebase 연결에 실패했습니다.\n데이터베이스 규칙을 확인해주세요.';
+    document.getElementById('loginError').classList.add('show');
+  }
+
+  // 세션 복원 (새로고침 시 로그인 유지)
+  const savedAdmin = sessionStorage.getItem('adminSession');
+  const savedUser  = sessionStorage.getItem('volUser');
+  if (savedAdmin === '1') {
+    isAdmin = true;
+    hide('loadingScreen');
+    await enterAdminScreen();
+    return;
+  } else if (savedUser) {
+    const mem = Object.values(members).find(m => m.name === savedUser);
+    if (mem) {
+      currentUser = mem;
+      hide('loadingScreen');
+      await enterVolunteerScreen();
+      return;
+    }
+  }
+
+  hide('loadingScreen');
+  showLogin();
+}
+
+async function loadMembers() {
+  const snap = await db.ref('members').get();
+  members = snap.val() || {};
+  if (Object.keys(members).length === 0) {
+    await seedMembers();
+    const snap2 = await db.ref('members').get();
+    members = snap2.val() || {};
+  }
+}
+
+async function seedMembers() {
+  const sample = [
+    {name:'김광섭',gender:'형제',canLead:true, isPioneer:false,spouseId:null},
+    {name:'박성민',gender:'형제',canLead:true, isPioneer:false,spouseId:null},
+    {name:'이규원',gender:'형제',canLead:true, isPioneer:false,spouseId:null},
+    {name:'장지현',gender:'형제',canLead:false,isPioneer:false,spouseId:null},
+    {name:'신권섭',gender:'형제',canLead:false,isPioneer:true, spouseId:null},
+    {name:'김왕국',gender:'형제',canLead:false,isPioneer:false,spouseId:null},
+    {name:'김충경',gender:'자매',canLead:false,isPioneer:false,spouseId:null},
+    {name:'양정옥',gender:'자매',canLead:false,isPioneer:false,spouseId:null},
+    {name:'임지혜',gender:'자매',canLead:false,isPioneer:true, spouseId:null},
+    {name:'정지희',gender:'자매',canLead:false,isPioneer:false,spouseId:null},
+    {name:'박선민',gender:'자매',canLead:false,isPioneer:true, spouseId:null},
+    {name:'송세현',gender:'자매',canLead:false,isPioneer:false,spouseId:null},
+  ];
+  const updates = {};
+  const ids = [];
+  for (const m of sample) {
+    const id = db.ref('members').push().key;
+    updates[`members/${id}`] = m;
+    ids.push({id, ...m});
+  }
+  // 부부 연결: 김광섭↔김충경, 박성민↔양정옥, 이규원↔임지혜
+  const find = (name) => ids.find(x => x.name === name);
+  const couples = [['김광섭','김충경'],['박성민','양정옥'],['이규원','임지혜']];
+  for (const [a, b] of couples) {
+    const ma = find(a), mb = find(b);
+    if (ma && mb) {
+      updates[`members/${ma.id}/spouseId`] = mb.id;
+      updates[`members/${mb.id}/spouseId`] = ma.id;
+    }
+  }
+  await db.ref().update(updates);
+}
+
+// ──────────────────────────────────────────────
+//  화면 전환 헬퍼
+// ──────────────────────────────────────────────
+function show(id){ document.getElementById(id).classList.remove('hidden'); }
+function hide(id){ document.getElementById(id).classList.add('hidden'); }
+function showLogin(){ hide('volunteerScreen'); hide('adminScreen'); show('loginScreen'); }
+
+// ──────────────────────────────────────────────
+//  로그인
+// ──────────────────────────────────────────────
+document.getElementById('loginName').addEventListener('keydown', e => { if(e.key==='Enter') loginVolunteer(); });
+document.getElementById('adminPw').addEventListener('keydown', e => { if(e.key==='Enter') loginAdmin(); });
+document.getElementById('loginPinInput').addEventListener('keydown', e => { if(e.key==='Enter') submitPinLogin(); });
+document.getElementById('loginNewPin').addEventListener('keydown', e => { if(e.key==='Enter') document.getElementById('loginConfirmPin').focus(); });
+document.getElementById('loginConfirmPin').addEventListener('keydown', e => { if(e.key==='Enter') submitSetPin(); });
+
+function findMemberByName(name) {
+  const nm = name.trim();
+  return Object.entries(members).find(([,m]) => m.name === nm) || null;
+}
+
+let loginPendingMember = null;
+
+async function loginVolunteer() {
+  const name = document.getElementById('loginName').value.trim();
+  const errEl = document.getElementById('loginError');
+  errEl.classList.remove('show');
+  if (!name) { showError('이름을 입력해주세요.'); return; }
+  const found = findMemberByName(name);
+  if (!found) { showError('등록되지 않은 봉사자입니다.\n관리자에게 문의하세요.'); return; }
+  loginPendingMember = { id: found[0], ...found[1] };
+
+  const pinSnap = await db.ref(`memberPins/${found[0]}`).get();
+  if (pinSnap.exists()) {
+    // 기존 PIN 입력 단계
+    document.getElementById('loginPinName').textContent = name + '님';
+    document.getElementById('loginPinInput').value = '';
+    document.getElementById('pinError').classList.remove('show');
+    hide('loginStepName');
+    show('loginStepPin');
+    setTimeout(() => document.getElementById('loginPinInput').focus(), 100);
+  } else {
+    // 최초 PIN 설정 단계
+    document.getElementById('loginSetPinName').textContent = name + '님';
+    document.getElementById('loginNewPin').value = '';
+    document.getElementById('loginConfirmPin').value = '';
+    document.getElementById('setPinError').classList.remove('show');
+    hide('loginStepName');
+    show('loginStepSetPin');
+    setTimeout(() => document.getElementById('loginNewPin').focus(), 100);
+  }
+}
+
+async function submitPinLogin() {
+  const pin = document.getElementById('loginPinInput').value.trim();
+  const errEl = document.getElementById('pinError');
+  errEl.classList.remove('show');
+  if (!/^\d{4}$/.test(pin)) {
+    errEl.textContent = '숫자 4자리를 입력해주세요.'; errEl.classList.add('show'); return;
+  }
+  const pinSnap = await db.ref(`memberPins/${loginPendingMember.id}`).get();
+  const inputHash = await hashPw(pin);
+  if (inputHash !== pinSnap.val()) {
+    errEl.textContent = '비밀번호가 올바르지 않습니다.'; errEl.classList.add('show'); return;
+  }
+  finishVolLogin();
+}
+
+async function submitSetPin() {
+  const newPin = document.getElementById('loginNewPin').value.trim();
+  const confirmPin = document.getElementById('loginConfirmPin').value.trim();
+  const errEl = document.getElementById('setPinError');
+  errEl.classList.remove('show');
+  if (!/^\d{4}$/.test(newPin)) {
+    errEl.textContent = '숫자 4자리를 입력해주세요.'; errEl.classList.add('show'); return;
+  }
+  if (newPin !== confirmPin) {
+    errEl.textContent = '비밀번호가 일치하지 않습니다.'; errEl.classList.add('show'); return;
+  }
+  const hash = await hashPw(newPin);
+  await db.ref(`memberPins/${loginPendingMember.id}`).set(hash);
+  finishVolLogin();
+}
+
+async function finishVolLogin() {
+  currentUser = loginPendingMember;
+  loginPendingMember = null;
+  isAdmin = false;
+  sessionStorage.setItem('volUser', currentUser.name);
+  hide('loginScreen');
+  await enterVolunteerScreen();
+}
+
+function backToNameStep() {
+  loginPendingMember = null;
+  hide('loginStepPin');
+  hide('loginStepSetPin');
+  show('loginStepName');
+}
+
+async function resetMemberPin(id, name) {
+  if (!confirm(`'${name}'의 비밀번호를 초기화하시겠습니까?\n다음 로그인 시 새 비밀번호를 설정하게 됩니다.`)) return;
+  await db.ref(`memberPins/${id}`).remove();
+  alert(`'${name}'의 비밀번호가 초기화되었습니다.`);
+}
+
+function showError(msg) {
+  const el = document.getElementById('loginError');
+  el.textContent = msg;
+  el.classList.add('show');
+}
+
+async function loginAdmin() {
+  // 잠금 여부 확인
+  if (Date.now() < adminLockUntil) {
+    const mins = Math.ceil((adminLockUntil - Date.now()) / 60000);
+    showError(`로그인 시도 횟수를 초과했습니다. ${mins}분 후 다시 시도해주세요.`);
+    return;
+  }
+  const pw = document.getElementById('adminPw').value;
+  const hash = await hashPw(pw);
+  if (hash !== ADMIN_PW_HASH) {
+    adminFailCount++;
+    if (adminFailCount >= 5) {
+      adminLockUntil = Date.now() + 30 * 60 * 1000; // 30분 잠금
+      adminFailCount = 0;
+      showError('비밀번호를 5회 틀렸습니다. 30분간 잠금됩니다.');
+    } else {
+      showError(`비밀번호가 올바르지 않습니다. (${adminFailCount}/5)`);
+    }
+    return;
+  }
+  adminFailCount = 0;
+  isAdmin = true;
+  currentUser = null;
+  sessionStorage.setItem('adminSession', '1');
+  hide('loginScreen');
+  await enterAdminScreen();
+}
+
+function logout() {
+  currentUser = null;
+  isAdmin = false;
+  loginPendingMember = null;
+  sessionStorage.removeItem('adminSession');
+  sessionStorage.removeItem('volUser');
+  document.getElementById('loginName').value = '';
+  document.getElementById('adminPw').value = '';
+  document.getElementById('loginError').classList.remove('show');
+  // 로그인 스텝 초기화
+  hide('loginStepPin');
+  hide('loginStepSetPin');
+  show('loginStepName');
+  // 실시간 리스너 해제 (봉사자용 - 확정 데이터)
+  if (confirmedListenerRef && confirmedListenerCb) {
+    confirmedListenerRef.off('value', confirmedListenerCb);
+    confirmedListenerRef = null;
+    confirmedListenerCb = null;
+    confirmedListenerYM = null;
+  }
+  // 실시간 리스너 해제 (봉사자용 - 신청 현황)
+  if (submissionsListenerRef && submissionsListenerCb) {
+    submissionsListenerRef.off('value', submissionsListenerCb);
+    submissionsListenerRef = null;
+    submissionsListenerCb = null;
+    submissionsListenerYM = null;
+  }
+  // 실시간 리스너 해제 (관리자 배정 탭용)
+  if (adminAssignListenerRef && adminAssignListenerCb) {
+    adminAssignListenerRef.off('value', adminAssignListenerCb);
+    adminAssignListenerRef = null;
+    adminAssignListenerCb = null;
+    adminAssignListenerYM = null;
+  }
+  showLogin();
+}
+
+// ──────────────────────────────────────────────
+//  봉사자 화면
+// ──────────────────────────────────────────────
+let volDisplayMonth = 1; // 1 = 다음달 기본
+const VOL_MIN_OFFSET = 0; // 0 = 이번 달
+const VOL_MAX_OFFSET = 1;
+
+async function enterVolunteerScreen() {
+  show('volunteerScreen');
+  document.getElementById('volUserName').textContent = currentUser.name + '님';
+  volDisplayMonth = 0; // 기본: 이번 달 (확정 계획표)
+  await volLoadAndRender();
+}
+
+async function volChangeMonth(dir) {
+  const next = volDisplayMonth + dir;
+  if (next < VOL_MIN_OFFSET || next > VOL_MAX_OFFSET) return;
+  volDisplayMonth = next;
+  await volLoadAndRender();
+}
+
+async function volLoadAndRender() {
+  const ym = getOffsetYM(volDisplayMonth);
+  currentYM = ym;
+  document.getElementById('volPrevBtn').disabled = volDisplayMonth <= VOL_MIN_OFFSET;
+  document.getElementById('volNextBtn').disabled = volDisplayMonth >= VOL_MAX_OFFSET;
+  document.getElementById('volMonthTitle').textContent = ymToLabel(ym);
+
+  const snapC = await db.ref(`confirmedAssignments/${ym}`).get();
+  const confirmed = snapC.exists() ? snapC.val() : null;
+
+  if (confirmed) {
+    // 확정된 계획표 보기
+    hide('volSubmitSuccess');
+    hide('volSubmitBar');
+    document.getElementById('volSlotsContainer').innerHTML = renderConfirmedScheduleForVol(ym, confirmed);
+  } else {
+    // 미확정 → 신청 가능 (이번 달 / 다음 달 모두)
+    show('volSubmitBar');
+    const snap = await db.ref(`submissions/${ym}/${currentUser.name}`).get();
+    const myData = snap.val();
+    volSelectedSlots = new Set(myData ? (myData.slots || []) : []);
+    if (myData) {
+      show('volSubmitSuccess');
+      document.getElementById('volSubmitBtn').textContent = '수정 완료';
+    } else {
+      hide('volSubmitSuccess');
+      document.getElementById('volSubmitBtn').textContent = '신청 완료';
+    }
+    renderVolSlots(ym);
+    setupSubmissionsListener(ym);
+  }
+
+  setupConfirmedListener(ym);
+}
+
+function setupConfirmedListener(ym) {
+  if (confirmedListenerYM === ym) return; // 이미 이 달 리스닝 중
+  if (confirmedListenerRef && confirmedListenerCb) {
+    confirmedListenerRef.off('value', confirmedListenerCb);
+  }
+  let initialSkip = true;
+  confirmedListenerCb = () => {
+    if (initialSkip) { initialSkip = false; return; }
+    // 확정 데이터 변경 시 자동 리렌더
+    if (!isAdmin && currentUser &&
+        !document.getElementById('volunteerScreen').classList.contains('hidden')) {
+      volLoadAndRender();
+    }
+  };
+  confirmedListenerRef = db.ref(`confirmedAssignments/${ym}`);
+  confirmedListenerRef.on('value', confirmedListenerCb);
+  confirmedListenerYM = ym;
+}
+
+function setupSubmissionsListener(ym) {
+  if (submissionsListenerYM === ym) return;
+  if (submissionsListenerRef && submissionsListenerCb) {
+    submissionsListenerRef.off('value', submissionsListenerCb);
+  }
+  let initialSkip = true;
+  submissionsListenerCb = () => {
+    if (initialSkip) { initialSkip = false; return; }
+    if (!isAdmin && currentUser &&
+        !document.getElementById('volunteerScreen').classList.contains('hidden')) {
+      submissionsListenerYM = null; // 강제 재설정
+      volLoadAndRender();
+    }
+  };
+  submissionsListenerRef = db.ref(`submissions/${ym}/${currentUser.name}`);
+  submissionsListenerRef.on('value', submissionsListenerCb);
+  submissionsListenerYM = ym;
+}
+
+// ── 확정 계획표 봉사자 뷰 ──
+function renderConfirmedScheduleForVol(ym, asgn) {
+  const allKeys = Object.keys(asgn).filter(k => asgn[k]);
+  if (allKeys.length === 0)
+    return `<div style="text-align:center;padding:40px;background:#fff;border-radius:16px;box-shadow:0 2px 10px rgba(0,0,0,.07)"><div style="font-size:2em;margin-bottom:12px">📋</div><div style="font-weight:800;color:#2d3748">배정 내역이 없습니다.</div></div>`;
+
+  const [y, m] = ym.split('-').map(Number);
+  function ds2(y2,m2,d2){ return `${y2}-${String(m2).padStart(2,'0')}-${String(d2).padStart(2,'0')}`; }
+  function addD(ds, n){ const [yy,mm,dd]=ds.split('-').map(Number); const dt=new Date(yy,mm-1,dd+n); return ds2(dt.getFullYear(),dt.getMonth()+1,dt.getDate()); }
+  function getMon(ds){ const [yy,mm,dd]=ds.split('-').map(Number); const dow=new Date(yy,mm-1,dd).getDay(); return addD(ds, dow===0?-6:1-dow); }
+
+  const monthFirst = ds2(y,m,1);
+  const monthLast  = ds2(y,m,new Date(y,m,0).getDate());
+  const firstMon   = getMon(monthFirst);
+  const weekSet = new Set(allKeys.map(sk => getMon(sk.split('__')[1])));
+  const sortedWeeks = [...weekSet].sort();
+
+  const FIXED_COLS = [
+    {id:'mon-eve',   off:0, label:'월 저녁'},
+    {id:'tue-eve',   off:1, label:'화 저녁'},
+    {id:'wed-eve',   off:2, label:'수 저녁'},
+    {id:'fri-dawn',  off:4, label:'금 새벽'},
+    {id:'fri-eve',   off:4, label:'금 저녁'},
+    {id:'sat-aft-1', off:5, label:'토 오후<br>1공구'},
+    {id:'sat-aft-8', off:5, label:'토 오후<br>8공구'},
+  ];
+
+  let html = '<div class="confirmed-badge">📌 배정이 확정되었습니다.</div>';
+
+  for (const monStr of sortedWeeks) {
+    const colDates = FIXED_COLS.map(col => addD(monStr, col.off));
+    const inMonthDates = colDates.filter(ds => ds >= monthFirst && ds <= monthLast);
+    if (inMonthDates.length === 0) continue;
+    const weekNum = Math.round((new Date(monStr) - new Date(firstMon)) / (7*86400000)) + 1;
+    const [,rfm,rfd] = inMonthDates[0].split('-').map(Number);
+    const [,rlm,rld] = inMonthDates[inMonthDates.length-1].split('-').map(Number);
+    const maxTeams = Math.max(3, ...FIXED_COLS.map((col,ci) => {
+      const sk = `${col.id}__${colDates[ci]}`;
+      return asgn[sk]?.teams?.length || 0;
+    }));
+
+    html += `<div class="result-week-section">
+      <div class="result-week-title">📅 ${weekNum}주차 (${rfm}/${rfd}~${rlm}/${rld})</div>
+      <div class="result-table-wrap"><table class="result-table"><thead><tr>`;
+    html += '<th class="result-th-team">팀</th>';
+
+    FIXED_COLS.forEach((col,ci) => {
+      const ds = colDates[ci];
+      const inMonth = ds >= monthFirst && ds <= monthLast;
+      const slotDef = ASSIGN_SLOTS.find(s => s.id === col.id);
+      const color = inMonth ? (SLOT_COLORS[slotDef?.label] || '#e2e8f0') : '#f0f2f5';
+      const [,mo,dd] = ds.split('-').map(Number);
+      const sk = `${col.id}__${ds}`;
+      const total = inMonth ? (asgn[sk]?.teams?.reduce((s,t) => s+(t.members?.length||0), 0) || 0) : MAX_PER_SLOT;
+      html += `<th class="result-th-slot" style="background:${color}${inMonth?'':';opacity:.35'}">
+        <div class="result-th-label">${col.label}</div>
+        <div class="result-th-date">${inMonth ? `${mo}/${dd}` : '-'}</div>
+        ${inMonth && total < MAX_PER_SLOT ? `<div style="font-size:.7em;color:#e53e3e;font-weight:700;margin-top:2px">빈자리 ${MAX_PER_SLOT-total}</div>` : ''}
+      </th>`;
+    });
+    html += '</tr></thead><tbody>';
+
+    for (let ti = 0; ti < maxTeams; ti++) {
+      html += `<tr><td class="result-td-team">${ti+1}팀</td>`;
+      FIXED_COLS.forEach((col,ci) => {
+        const ds = colDates[ci];
+        const inMonth = ds >= monthFirst && ds <= monthLast;
+        const sk = `${col.id}__${ds}`;
+        const slotDef = ASSIGN_SLOTS.find(s => s.id === col.id);
+        const color = SLOT_COLORS[slotDef?.label] || '#e2e8f0';
+        if (!inMonth) { html += '<td class="result-td-slot" style="background:#f0f2f5;opacity:.35"></td>'; return; }
+        const team = asgn[sk]?.teams?.[ti];
+        const m0 = team?.members?.[0], m1 = team?.members?.[1];
+        html += `<td class="result-td-slot" style="background:${color}22">`;
+        if (m0) html += `<div class="result-name-row${m0.role==='leader'?' leader':''}">${m0.role==='leader'?'★':''}${m0.name}</div>`;
+        if (m1) html += `<div class="result-name-row${m1.role==='leader'?' leader':''}">${m1.role==='leader'?'★':''}${m1.name}</div>`;
+        if (!m0 && !m1) html += '<div style="color:#ccc;text-align:center;font-size:.85em;padding:4px">-</div>';
+        html += '</td>';
+      });
+      html += '</tr>';
+    }
+
+    // 빈자리 신청 행
+    const hasAnyVacancy = FIXED_COLS.some((col,ci) => {
+      const ds = colDates[ci];
+      if (ds < monthFirst || ds > monthLast) return false;
+      const sk = `${col.id}__${ds}`;
+      const total = asgn[sk]?.teams?.reduce((s,t) => s+(t.members?.length||0), 0) || 0;
+      return total < MAX_PER_SLOT;
+    });
+    if (hasAnyVacancy) {
+      html += `<tr><td class="result-td-team" style="font-size:.72em;color:#e53e3e;line-height:1.2">빈<br>자리</td>`;
+      FIXED_COLS.forEach((col,ci) => {
+        const ds = colDates[ci];
+        const inMonth = ds >= monthFirst && ds <= monthLast;
+        const sk = `${col.id}__${ds}`;
+        if (!inMonth) { html += '<td class="result-td-slot" style="background:#f0f2f5;opacity:.35"></td>'; return; }
+        const teams = asgn[sk]?.teams || [];
+        const total = teams.reduce((s,t) => s+(t.members?.length||0), 0);
+        const userInSlot = teams.some(t => t.members?.some(x => x.name === currentUser?.name));
+        html += `<td class="result-td-slot" style="text-align:center;padding:3px 2px">`;
+        if (userInSlot) {
+          html += `<div style="font-size:.72em;color:#38a169;font-weight:700">✓배정됨</div>`;
+        } else if (total < MAX_PER_SLOT) {
+          html += `<button onclick="fillVacancy('${ym}','${sk}')" style="background:#ebf4ff;color:#2b6cb0;border:none;border-radius:7px;padding:4px 3px;font-size:.72em;font-weight:700;cursor:pointer;width:100%;min-height:26px">신청</button>`;
+        } else {
+          html += `<div style="font-size:.72em;color:#a0aec0">마감</div>`;
+        }
+        html += '</td>';
+      });
+      html += '</tr>';
+    }
+
+    html += '</tbody></table></div></div>';
+  }
+  return html;
+}
+
+async function fillVacancy(ym, slotKey) {
+  if (!currentUser) return;
+  if (!confirm('해당 타임에 신청하시겠습니까?')) return;
+  const snap = await db.ref(`confirmedAssignments/${ym}/${slotKey}`).get();
+  const slotData = snap.val() || {teams: []};
+  const teams = JSON.parse(JSON.stringify(slotData.teams || []));
+  const total = teams.reduce((s,t) => s+(t.members?.length||0), 0);
+  if (total >= MAX_PER_SLOT) { alert('이미 정원이 찼습니다.'); return; }
+  const alreadyIn = teams.some(t => t.members?.some(x => x.name === currentUser.name));
+  if (alreadyIn) { alert('이미 이 타임에 배정되어 있습니다.'); return; }
+  // 1명짜리 팀에 합류 또는 새 팀 생성
+  const singleTeam = teams.find(t => t.members?.length === 1);
+  if (singleTeam) {
+    singleTeam.members = [...singleTeam.members, {name:currentUser.name, gender:currentUser.gender, role:'member'}];
+  } else {
+    teams.push({members:[{name:currentUser.name, gender:currentUser.gender, role:'member'}]});
+  }
+  // confirmedAssignments와 assignments 둘 다 업데이트 (관리자 뷰 동기화)
+  await db.ref().update({
+    [`confirmedAssignments/${ym}/${slotKey}/teams`]: teams,
+    [`assignments/${ym}/${slotKey}/teams`]: teams,
+  });
+  // 리스너가 re-render 트리거 (confirmedListenerYM 리셋해서 강제 재실행)
+  confirmedListenerYM = null;
+  adminAssignListenerYM = null;
+  await volLoadAndRender();
+}
+
+function renderVolSlots(ym) {
+  const [y, m] = ym.split('-').map(Number);
+  const today = new Date();
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+  const daysInMonth = new Date(y, m, 0).getDate();
+  const firstDow = new Date(y, m - 1, 1).getDay(); // 1일의 요일
+
+  // 요일 헤더
+  let html = '<div class="cal-wrap"><div class="cal-grid">';
+  ['일','월','화','수','목','금','토'].forEach(d => {
+    html += `<div class="cal-dow">${d}</div>`;
+  });
+
+  // 빈 셀 (첫 주 앞쪽)
+  for (let i = 0; i < firstDow; i++) {
+    html += '<div class="cal-cell empty"></div>';
+  }
+
+  // 날짜 셀
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dt = new Date(y, m - 1, d);
+    const dow = dt.getDay();
+    const dateStr = `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const slots = VOL_SLOTS.filter(s => s.day === dow);
+    const isToday = dateStr === todayStr;
+    const isSun = dow === 0, isSat = dow === 6;
+
+    let cellCls = 'cal-cell';
+    if (isSun) cellCls += ' sun';
+    if (isSat) cellCls += ' sat';
+    if (isToday) cellCls += ' today';
+
+    html += `<div class="${cellCls}">
+      <div class="cal-date">${d}</div>`;
+
+    for (const slot of slots) {
+      const slotKey = `${slot.id}__${dateStr}`;
+      const on = volSelectedSlots.has(slotKey);
+      // 슬롯 짧은 이름
+      const shortLabel = slotShortLabel(slot.label);
+      const bg = on ? slot.color : '#f0f4f8';
+      const txtColor = on ? '#2d3748' : '#a0aec0';
+      html += `<div class="cal-slot-chip${on?' on':''}"
+        style="background:${bg};color:${txtColor}"
+        onclick="volToggleSlot('${slotKey}')">${shortLabel}</div>`;
+    }
+    html += '</div>';
+  }
+
+  // 마지막 주 나머지 빈 셀
+  const totalCells = firstDow + daysInMonth;
+  const remainder = totalCells % 7;
+  if (remainder !== 0) {
+    for (let i = remainder; i < 7; i++) html += '<div class="cal-cell empty"></div>';
+  }
+  html += '</div></div>'; // cal-grid + cal-wrap 닫기
+
+  // 선택된 타임 요약 패널
+  const selected = [...volSelectedSlots].sort();
+  if (selected.length > 0) {
+    html += `<div class="selected-panel">
+      <div class="selected-panel-title">선택된 타임 (${selected.length}개)</div>
+      <div class="selected-chips">`;
+    for (const sk of selected) {
+      const [slotId, dateStr] = sk.split('__');
+      const slot = VOL_SLOTS.find(s => s.id === slotId);
+      const [, mo, dd] = dateStr.split('-');
+      const label = `${parseInt(mo)}/${parseInt(dd)} ${slot?.label || slotId}`;
+      const bg = slot?.color ? slot.color + '30' : '#ebf4ff';
+      const border = slot?.color ? slot.color + '80' : '#5a67d855';
+      html += `<span class="selected-chip" style="background:${bg};border-color:${border};color:#2d3748">
+        ${label}
+        <button class="chip-remove" onclick="volToggleSlot('${sk}')">✕</button>
+      </span>`;
+    }
+    html += '</div></div>';
+  } else {
+    html += `<div class="selected-panel">
+      <div class="selected-empty">달력에서 원하는 타임을 탭해서 선택하세요.</div>
+    </div>`;
+  }
+
+  document.getElementById('volSlotsContainer').innerHTML = html;
+}
+
+// 슬롯 짧은 이름 (달력 셀에 표시)
+function slotShortLabel(label) {
+  const map = {
+    '월요일 저녁':'저녁','화요일 저녁':'저녁','수요일 저녁':'저녁',
+    '금요일 새벽':'새벽','금요일 저녁':'저녁','토요일 오후':'오후'
+  };
+  return map[label] || label;
+}
+
+function volToggleSlot(slotKey) {
+  if (volSelectedSlots.has(slotKey)) {
+    volSelectedSlots.delete(slotKey);
+  } else {
+    volSelectedSlots.add(slotKey);
+  }
+  // Firebase 재요청 없이 로컬 상태로 달력만 다시 그림
+  renderVolSlots(currentYM);
+}
+
+function volClearAll() {
+  volSelectedSlots.clear();
+  renderVolSlots(currentYM);
+}
+
+async function volSubmit() {
+  const ym = currentYM;
+  const slots = [...volSelectedSlots];
+  await db.ref(`submissions/${ym}/${currentUser.name}`).set({
+    slots,
+    timestamp: Date.now(),
+    gender: currentUser.gender,
+    memberId: currentUser.id
+  });
+  show('volSubmitSuccess');
+  document.getElementById('volSubmitBtn').textContent = '수정 완료';
+  await volLoadAndRender();
+}
+
+// ──────────────────────────────────────────────
+//  관리자 화면
+// ──────────────────────────────────────────────
+async function enterAdminScreen() {
+  show('adminScreen');
+  if (!adminYM) adminYM = getCurrentYM();
+  if (Object.keys(members).length === 0) {
+    try { await loadMembers(); } catch(e) {}
+  }
+  await adminTab('status', document.querySelector('.tab-btn'));
+}
+
+async function adminTab(tab, el) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  if (el) el.classList.add('active');
+  currentAdminTab = tab;
+  ['tabStatus','tabAssign','tabStats','tabMembers'].forEach(id => hide(id));
+  show('tab' + tab.charAt(0).toUpperCase() + tab.slice(1));
+  if (tab === 'status') await renderStatusTab(adminYM);
+  else if (tab === 'assign') await renderAssignTab(adminYM);
+  else if (tab === 'stats') await renderStatsTab(adminYM);
+  else if (tab === 'members') renderMembersTab();
+}
+
+async function adminChangeMonth(dir) {
+  const [y, m] = adminYM.split('-').map(Number);
+  const nd = new Date(y, m - 1 + dir, 1);
+  adminYM = `${nd.getFullYear()}-${String(nd.getMonth()+1).padStart(2,'0')}`;
+  assignEditMode = false;
+  if (currentAdminTab === 'status') await renderStatusTab(adminYM);
+  else if (currentAdminTab === 'assign') await renderAssignTab(adminYM);
+  else if (currentAdminTab === 'stats') await renderStatsTab(adminYM);
+}
+
+// ── 탭1: 신청 현황 ──
+async function renderStatusTab(ym) {
+  const snap = await db.ref(`submissions/${ym}`).get();
+  const subs = snap.val() || {};
+  submissions = subs;
+
+  const memberList = Object.values(members);
+  const totalMembers = memberList.length;
+  const activeNames = new Set(memberList.map(m => m.name));
+  // 탈퇴한 멤버의 신청 항목은 표시하지 않음
+  const submittedNames = Object.keys(subs).filter(n => activeNames.has(n));
+  const totalSubmitted = submittedNames.length;
+  const notSubmitted = memberList.filter(m => !submittedNames.includes(m.name));
+
+  // 슬롯별 신청자
+  const slotMap = {}; // slotKey → [name,...]
+  for (const [name, d] of Object.entries(subs)) {
+    if (!d || !d.slots) continue;
+    for (const sk of d.slots) {
+      if (!slotMap[sk]) slotMap[sk] = [];
+      slotMap[sk].push(name);
+    }
+  }
+
+  let html = `
+    <div class="result-month-nav">
+      <button class="month-nav-btn" onclick="adminChangeMonth(-1)">◀</button>
+      <h3>${ymToLabel(ym)} 신청 현황</h3>
+      <button class="month-nav-btn" onclick="adminChangeMonth(1)">▶</button>
+    </div>
+    <div class="summary-grid" style="grid-template-columns:1fr 1fr;margin-bottom:16px">
+      <div class="summary-card"><div class="summary-num">${totalSubmitted}</div><div class="summary-label">신청 완료</div></div>
+      <div class="summary-card"><div class="summary-num" style="color:#e53e3e">${totalMembers - totalSubmitted}</div><div class="summary-label">미신청</div></div>
+    </div>`;
+
+  // 슬롯별 신청자 카드 (날짜별로 그룹)
+  // 슬롯키 형식: "mon-eve__YYYY-MM-DD"
+  const sortedKeys = Object.keys(slotMap).sort();
+  if (sortedKeys.length === 0) {
+    html += '<div style="text-align:center;color:#a0aec0;padding:30px">신청 내역이 없습니다.</div>';
+  } else {
+    // 날짜별 그룹
+    const byDate = {};
+    for (const sk of sortedKeys) {
+      const [slotId, dateStr] = sk.split('__');
+      if (!byDate[dateStr]) byDate[dateStr] = [];
+      byDate[dateStr].push({slotId, dateStr, sk});
+    }
+    for (const [dateStr, items] of Object.entries(byDate).sort()) {
+      const dt = new Date(dateStr + 'T00:00:00');
+      const [y,mo,d] = dateStr.split('-');
+      const dayLabel = `${parseInt(mo)}월 ${parseInt(d)}일 (${DAY_LABELS[dt.getDay()]})`;
+      html += `<div style="font-size:.8em;font-weight:700;color:#a0aec0;margin:14px 0 6px;text-transform:uppercase">${dayLabel}</div>`;
+      for (const {slotId, sk} of items) {
+        const slot = VOL_SLOTS.find(s => s.id === slotId) || {label: slotId, color:'#ddd'};
+        const names = slotMap[sk] || [];
+        const full = names.length >= MAX_PER_SLOT;
+        html += `<div class="slot-status-item">
+          <div class="slot-status-header">
+            <div class="slot-status-title">
+              <div style="width:10px;height:10px;border-radius:50%;background:${slot.color}"></div>
+              ${slot.label}
+            </div>
+            <span class="badge ${full?'badge-y':'badge-g'}">${names.length}/${MAX_PER_SLOT}</span>
+          </div>
+          <div class="slot-members">
+            ${names.map(n => {
+              const m = memberList.find(x => x.name === n);
+              const gc = m?.gender === '형제' ? 'member-chip-b' : 'member-chip-s';
+              return `<span class="member-chip ${gc}" style="display:inline-flex;align-items:center;gap:3px">${n}<button onclick="deleteSubmission('${ym}','${n}')" style="background:none;border:none;cursor:pointer;color:inherit;opacity:.55;font-size:.85em;padding:0;line-height:1" title="신청 삭제">✕</button></span>`;
+            }).join('')}
+          </div>
+        </div>`;
+      }
+    }
+  }
+
+  // 미신청자
+  html += `<div class="not-submitted-list" style="margin-top:16px">
+    <div style="font-weight:700;font-size:.9em;margin-bottom:10px">
+      ⚠️ 미신청자 (${notSubmitted.length}명)
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px">
+      ${notSubmitted.map(m => {
+        const gc = m.gender === '형제' ? 'member-chip-b' : 'member-chip-s';
+        return `<span class="member-chip ${gc}">${m.name}</span>`;
+      }).join('') || '<span style="color:#a0aec0;font-size:.85em">없음</span>'}
+    </div>
+  </div>`;
+
+  document.getElementById('tabStatus').innerHTML = html;
+}
+
+async function deleteSubmission(ym, name) {
+  if (!confirm(`'${name}'의 ${ymToLabel(ym)} 신청을 삭제하시겠습니까?`)) return;
+  await db.ref(`submissions/${ym}/${name}`).remove();
+  await renderStatusTab(ym);
+}
+
+// ── 탭2: 자동 배정 ──
+async function renderAssignTab(ym) {
+  const snap  = await db.ref(`submissions/${ym}`).get();
+  submissions = snap.val() || {};
+  const snapA = await db.ref(`assignments/${ym}`).get();
+  assignments = snapA.val() || {};
+  const snapC = await db.ref(`confirmedAssignments/${ym}`).get();
+  const confirmed = snapC.exists();
+  // 확정 데이터가 있으면 그것을 표시에 사용 (빈자리 신청 등 실시간 변경 반영)
+  const displayData = confirmed ? (snapC.val() || assignments) : assignments;
+
+  // 월 네비게이션 + 액션 버튼
+  let html = `
+    <div class="result-month-nav">
+      <button class="month-nav-btn" onclick="adminChangeMonth(-1)">◀</button>
+      <h3>${ymToLabel(ym)}</h3>
+      <button class="month-nav-btn" onclick="adminChangeMonth(1)">▶</button>
+    </div>
+    <div class="result-action-bar">
+      <button class="btn btn-primary" onclick="runAssignment('${ym}')">🎯 배정 실행</button>
+      ${Object.keys(displayData).length > 0 ? `
+        <button class="btn ${assignEditMode?'btn-orange':'btn-gray'}" onclick="toggleAssignEdit('${ym}')">
+          ${assignEditMode ? '✅ 수정 완료' : '✏️ 수동 수정'}
+        </button>
+        <button class="btn btn-success" onclick="confirmAssignment('${ym}')">📌 배정 확정</button>
+        <button class="btn btn-gray" onclick="captureResult()">📷 이미지 복사</button>
+        <button class="btn btn-danger" style="font-size:.82em;padding:9px 12px" onclick="resetAssignment('${ym}')">🗑️ 초기화</button>
+      ` : `
+        <button class="btn btn-danger" style="font-size:.82em;padding:9px 12px" onclick="resetAssignment('${ym}')">🗑️ 확정 초기화</button>
+      `}
+    </div>
+    ${confirmed ? '<div class="confirmed-badge">📌 이 달 배정이 확정되었습니다.</div>' : ''}
+  `;
+
+  if (Object.keys(displayData).length === 0) {
+    html += '<div style="text-align:center;color:#a0aec0;padding:40px;background:#fff;border-radius:14px">아직 배정 결과가 없습니다.<br>위 버튼을 눌러 배정을 실행하세요.</div>';
+  } else {
+    // assignments를 displayData로 동기화 (수동 수정 시 확정 데이터 기준)
+    if (confirmed) assignments = displayData;
+    html += `<div id="assignResultArea">${renderAssignCalendar(assignments, ym)}</div>`;
+  }
+
+  document.getElementById('tabAssign').innerHTML = html;
+  setupAdminAssignListener(ym);
+}
+
+function setupAdminAssignListener(ym) {
+  if (adminAssignListenerYM === ym) return; // 이미 이 달 리스닝 중
+  if (adminAssignListenerRef && adminAssignListenerCb) {
+    adminAssignListenerRef.off('value', adminAssignListenerCb);
+  }
+  let initialSkip = true;
+  adminAssignListenerCb = () => {
+    if (initialSkip) { initialSkip = false; return; }
+    // 수동 수정 중이 아닐 때만 자동 갱신
+    if (isAdmin && currentAdminTab === 'assign' && !assignEditMode &&
+        !document.getElementById('adminScreen').classList.contains('hidden')) {
+      renderAssignTab(ym);
+    }
+  };
+  adminAssignListenerRef = db.ref(`confirmedAssignments/${ym}`);
+  adminAssignListenerRef.on('value', adminAssignListenerCb);
+  adminAssignListenerYM = ym;
+}
+
+function renderAssignCalendar(asgn, ym) {
+  const allKeys = Object.keys(asgn).filter(k => asgn[k]);
+  if (allKeys.length === 0)
+    return '<div style="text-align:center;color:#a0aec0;padding:30px">배정 결과가 없습니다.</div>';
+
+  const [y, m] = ym.split('-').map(Number);
+
+  // 날짜 문자열 유틸
+  function dateStr(y2, m2, d2) {
+    return `${y2}-${String(m2).padStart(2,'0')}-${String(d2).padStart(2,'0')}`;
+  }
+  function addDays(ds, n) {
+    const [yy, mm, dd] = ds.split('-').map(Number);
+    const dt = new Date(yy, mm - 1, dd + n);
+    return dateStr(dt.getFullYear(), dt.getMonth() + 1, dt.getDate());
+  }
+  function getMondayStr(ds) {
+    const [yy, mm, dd] = ds.split('-').map(Number);
+    const dow = new Date(yy, mm - 1, dd).getDay(); // 0=일
+    return addDays(ds, dow === 0 ? -6 : 1 - dow);
+  }
+
+  const monthFirstStr = dateStr(y, m, 1);
+  const monthLastStr  = dateStr(y, m, new Date(y, m, 0).getDate());
+  const firstMon      = getMondayStr(monthFirstStr);
+
+  // 주차별 월요일 수집 (배정 결과에 있는 날짜 기준)
+  const weekSet = new Set(allKeys.map(sk => getMondayStr(sk.split('__')[1])));
+  const sortedWeeks = [...weekSet].sort();
+
+  // 고정 7컬럼 정의 (월요일 기준 dayOffset)
+  const FIXED_COLS = [
+    { id:'mon-eve',   off:0, label:'월 저녁' },
+    { id:'tue-eve',   off:1, label:'화 저녁' },
+    { id:'wed-eve',   off:2, label:'수 저녁' },
+    { id:'fri-dawn',  off:4, label:'금 새벽' },
+    { id:'fri-eve',   off:4, label:'금 저녁' },
+    { id:'sat-aft-1', off:5, label:'토 오후<br>1공구' },
+    { id:'sat-aft-8', off:5, label:'토 오후<br>8공구' },
+  ];
+
+  let html = '';
+
+  for (const monStr of sortedWeeks) {
+    // 각 컬럼의 날짜 계산
+    const colDates = FIXED_COLS.map(col => addDays(monStr, col.off));
+
+    // 월 안에 속하는 날짜만 범위 레이블에 사용
+    const inMonthDates = colDates.filter(ds => ds >= monthFirstStr && ds <= monthLastStr);
+    if (inMonthDates.length === 0) continue;
+    const [, rfm, rfd] = inMonthDates[0].split('-').map(Number);
+    const [, rlm, rld] = inMonthDates[inMonthDates.length - 1].split('-').map(Number);
+
+    // 주차 번호
+    const weekNum = Math.round(
+      (new Date(monStr) - new Date(firstMon)) / (7 * 86400000)
+    ) + 1;
+
+    // 이 주에서 실제 배정된 슬롯의 최대 팀 수
+    const maxTeams = Math.max(3, ...FIXED_COLS.map((col, ci) => {
+      const sk = `${col.id}__${colDates[ci]}`;
+      return asgn[sk]?.teams?.length || 0;
+    }));
+    // 수동 수정 모드에서는 팀 추가를 위해 행 하나 더 표시
+    const displayMaxTeams = assignEditMode ? maxTeams + 1 : maxTeams;
+
+    html += `<div class="result-week-section">
+      <div class="result-week-title">📅 ${weekNum}주차 (${rfm}/${rfd}~${rlm}/${rld})</div>
+      <div class="result-table-wrap"><table class="result-table"><thead><tr>`;
+    html += '<th class="result-th-team">팀</th>';
+
+    // 헤더 행
+    FIXED_COLS.forEach((col, ci) => {
+      const ds       = colDates[ci];
+      const inMonth  = ds >= monthFirstStr && ds <= monthLastStr;
+      const slotDef  = ASSIGN_SLOTS.find(s => s.id === col.id);
+      const color    = inMonth ? (SLOT_COLORS[slotDef?.label] || '#e2e8f0') : '#f0f2f5';
+      const [, mo, dd] = ds.split('-').map(Number);
+      html += `<th class="result-th-slot" style="background:${color}${inMonth ? '' : ';opacity:.35'}">
+        <div class="result-th-label">${col.label}</div>
+        <div class="result-th-date">${inMonth ? `${mo}/${dd}` : '-'}</div>
+      </th>`;
+    });
+    html += '</tr></thead><tbody>';
+
+    // 팀 행
+    for (let ti = 0; ti < displayMaxTeams; ti++) {
+      const isExtraRow = ti >= maxTeams; // 팀 추가용 여분 행
+      html += `<tr><td class="result-td-team">${ti + 1}팀</td>`;
+      FIXED_COLS.forEach((col, ci) => {
+        const ds      = colDates[ci];
+        const inMonth = ds >= monthFirstStr && ds <= monthLastStr;
+        const sk      = `${col.id}__${ds}`;
+        const slotDef = ASSIGN_SLOTS.find(s => s.id === col.id);
+        const color   = SLOT_COLORS[slotDef?.label] || '#e2e8f0';
+        if (!inMonth) {
+          html += '<td class="result-td-slot" style="background:#f0f2f5;opacity:.35"></td>';
+          return;
+        }
+        const team = asgn[sk]?.teams?.[ti];
+        const m0   = team?.members?.[0];
+        const m1   = team?.members?.[1];
+        html += `<td class="result-td-slot" style="background:${color}22">`;
+        if (isExtraRow && assignEditMode) {
+          // 여분 행: 첫 번째 멤버 추가 버튼만 표시
+          html += `<div class="result-name-row editable" style="color:#a0aec0;border:1px dashed #cbd5e0;text-align:center" onclick="openNamePicker('${sk}',${ti},0,'')">+ 추가</div>`;
+        } else {
+          [m0, m1].forEach((mem, mi) => {
+            if (!mem) {
+              if (assignEditMode)
+                html += `<div class="result-name-row editable" style="color:#a0aec0;border:1px dashed #cbd5e0;text-align:center" onclick="openNamePicker('${sk}',${ti},${mi},'')">+ 추가</div>`;
+              return;
+            }
+            const isLeader = mem.role === 'leader';
+            const cls = 'result-name-row' + (isLeader ? ' leader' : '') + (assignEditMode ? ' editable' : '');
+            const ev  = assignEditMode ? `onclick="openNamePicker('${sk}',${ti},${mi},'${mem.name}')"` : '';
+            html += `<div class="${cls}" ${ev}>${isLeader ? '★' : ''}${mem.name}</div>`;
+          });
+          if (!m0 && !m1 && !assignEditMode) html += '<div style="color:#ccc;text-align:center;font-size:.85em;padding:4px">-</div>';
+        }
+        html += '</td>';
+      });
+      html += '</tr>';
+    }
+    html += '</tbody></table></div></div>';
+  }
+
+  return html;
+}
+
+function renderSlotBlock(slotKey, data) {
+  const [slotId] = slotKey.split('__');
+  const slotDef  = ASSIGN_SLOTS.find(s => s.id === slotId);
+  const label    = slotDef ? slotDef.label : slotId;
+  const color    = SLOT_COLORS[label] || '#e2e8f0';
+  const teams    = data.teams || [];
+  const total    = teams.reduce((a, t) => a + (t.members?.length || 0), 0);
+
+  let html = `<div class="result-slot-block">
+    <div class="result-slot-title" style="border-left:4px solid ${color}">
+      <span>${label}</span>
+      <span class="badge badge-g">${total}명</span>
+    </div>`;
+
+  if (teams.length === 0) {
+    html += '<div style="padding:12px;text-align:center;color:#a0aec0;font-size:.85em">배정 없음</div>';
+  } else {
+    teams.forEach((team, ti) => {
+      const m0 = team.members?.[0];
+      const m1 = team.members?.[1];
+      html += `<div class="result-team-row">
+        ${renderNameChip(slotKey, ti, 0, m0)}
+        ${renderNameChip(slotKey, ti, 1, m1)}
+      </div>`;
+    });
+  }
+  return html + '</div>';
+}
+
+// 달력 셀 내부용 초소형 칩
+function renderNameChipSm(slotKey, teamIdx, memberIdx, member) {
+  if (!member) return `<div class="result-name-chip-sm empty-chip">-</div>`;
+  const isLeader  = member.role === 'leader';
+  const leaderCls = isLeader ? ' leader' : '';
+  const editCls   = assignEditMode ? ' editable' : '';
+  const prefix    = isLeader ? '★' : '';
+  const onclick   = assignEditMode
+    ? `onclick="openNamePicker('${slotKey}',${teamIdx},${memberIdx},'${member.name}')"`
+    : '';
+  return `<div class="result-name-chip-sm${leaderCls}${editCls}" ${onclick}>${prefix}${member.name}</div>`;
+}
+
+function renderNameChip(slotKey, teamIdx, memberIdx, member) {
+  if (!member) return `<div class="result-name-chip empty">-</div>`;
+  const isLeader = member.role === 'leader';
+  const editCls  = assignEditMode ? ' editable' : '';
+  const leaderCls = isLeader ? ' leader' : '';
+  const prefix   = isLeader ? '★ ' : '';
+  const onclick  = assignEditMode
+    ? `onclick="openNamePicker('${slotKey}',${teamIdx},${memberIdx},'${member.name}')"`
+    : '';
+  return `<div class="result-name-chip${leaderCls}${editCls}" ${onclick}>${prefix}${member.name}</div>`;
+}
+
+async function toggleAssignEdit(ym) {
+  assignEditMode = !assignEditMode;
+  if (!assignEditMode) {
+    // 수정 완료 — Firebase에 저장 (assignments + 확정 데이터가 있으면 confirmedAssignments도 업데이트)
+    const snapC = await db.ref(`confirmedAssignments/${ym}`).get();
+    const updates = { [`assignments/${ym}`]: assignments };
+    if (snapC.exists()) updates[`confirmedAssignments/${ym}`] = assignments;
+    await db.ref().update(updates);
+  }
+  adminAssignListenerYM = null; // 리스너 강제 재설정
+  await renderAssignTab(ym);
+}
+
+// ── 이름 선택 모달 ──
+async function openNamePicker(slotKey, teamIdx, memberIdx, currentName) {
+  editingSlotKey   = slotKey;
+  editingTeamIdx   = teamIdx;
+  editingMemberIdx = memberIdx;
+  document.getElementById('namePickerCurrent').textContent = `현재: ${currentName}`;
+  document.getElementById('namePickerList').innerHTML =
+    '<div style="text-align:center;padding:20px;color:#a0aec0;font-size:.9em">로딩 중...</div>';
+  document.getElementById('namePickerModal').classList.remove('hidden');
+
+  // members가 비어있으면 Firebase에서 다시 로드
+  if (Object.keys(members).length === 0) {
+    try { await loadMembers(); } catch(e) { console.error(e); }
+  }
+
+  const list = Object.values(members).sort((a,b) => {
+    if (a.gender !== b.gender) return a.gender === '형제' ? -1 : 1;
+    return a.name.localeCompare(b.name, 'ko');
+  });
+
+  let html = `<div class="name-picker-item" style="grid-column:1/-1;background:#fff5f5;color:#e53e3e;border-color:#fed7d7" onclick="clearSlotMember()">✕ 빈자리로 설정</div>`;
+  for (const m of list) {
+    const cls = m.gender === '형제' ? 'brother' : 'sister';
+    html += `<div class="name-picker-item ${cls}" onclick="pickName('${m.name}','${m.gender}')">${m.name}</div>`;
+  }
+  document.getElementById('namePickerList').innerHTML =
+    html || '<div style="text-align:center;padding:20px;color:#e53e3e;font-size:.9em">봉사자 목록을 불러올 수 없습니다</div>';
+}
+
+function pickName(name, gender) {
+  if (!editingSlotKey || editingTeamIdx === null || editingMemberIdx === null) return;
+  // 슬롯/팀/멤버 구조가 없으면 생성
+  if (!assignments[editingSlotKey]) assignments[editingSlotKey] = { teams: [] };
+  const teams = assignments[editingSlotKey].teams;
+  while (teams.length <= editingTeamIdx) teams.push({ members: [] });
+  if (!teams[editingTeamIdx].members) teams[editingTeamIdx].members = [];
+  const team = teams[editingTeamIdx];
+  const oldMember = team.members[editingMemberIdx] || {};
+  team.members[editingMemberIdx] = { ...oldMember, name, gender, role: oldMember.role || 'member' };
+  closeNamePicker();
+  document.getElementById('assignResultArea').innerHTML = renderAssignCalendar(assignments, adminYM);
+}
+
+function clearSlotMember() {
+  if (!editingSlotKey || editingTeamIdx === null || editingMemberIdx === null) return;
+  const slot = assignments[editingSlotKey];
+  if (!slot?.teams) return;
+  const team = slot.teams[editingTeamIdx];
+  if (!team?.members) return;
+  // 해당 멤버 제거
+  team.members.splice(editingMemberIdx, 1);
+  // 팀에 멤버가 없으면 팀 자체 제거
+  if (team.members.length === 0) {
+    slot.teams.splice(editingTeamIdx, 1);
+  }
+  closeNamePicker();
+  document.getElementById('assignResultArea').innerHTML = renderAssignCalendar(assignments, adminYM);
+}
+
+function closeNamePicker() {
+  document.getElementById('namePickerModal').classList.add('hidden');
+  editingSlotKey = editingTeamIdx = editingMemberIdx = null;
+}
+function closeNamePickerOutside(e) {
+  if (e.target === document.getElementById('namePickerModal')) closeNamePicker();
+}
+
+// ── 배정 확정 ──
+async function confirmAssignment(ym) {
+  if (!confirm(`${ymToLabel(ym)} 배정을 확정하시겠습니까?\n확정 후 통계에 반영됩니다.`)) return;
+  await db.ref(`confirmedAssignments/${ym}`).set(assignments);
+  alert('배정이 확정되었습니다.');
+  await renderAssignTab(ym);
+}
+
+// ── 배정 초기화 ──
+async function resetAssignment(ym) {
+  if (!confirm(`⚠️ ${ymToLabel(ym)} 전체를 초기화합니다.\n배정 결과 + 신청 현황이 모두 삭제됩니다.\n되돌릴 수 없습니다. 계속하시겠습니까?`)) return;
+  await db.ref().update({
+    [`assignments/${ym}`]: null,
+    [`confirmedAssignments/${ym}`]: null,
+    [`submissions/${ym}`]: null,
+    [`rotation/${ym}`]: null,
+  });
+  assignments = {};
+  assignEditMode = false;
+  adminAssignListenerYM = null;
+  alert('초기화되었습니다.');
+  await renderAssignTab(ym);
+}
+
+// ── 이미지 캡처 & 클립보드 ──
+async function captureResult() {
+  const target = document.getElementById('assignResultArea');
+  if (!target) { alert('캡처할 배정 결과가 없습니다.'); return; }
+  const btn = document.querySelector('[onclick="captureResult()"]');
+  const origTxt = btn?.textContent;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ 캡처 중...'; }
+
+  // html2canvas 동적 로드
+  if (typeof html2canvas === 'undefined') {
+    await new Promise((res, rej) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+      s.onload = res; s.onerror = rej;
+      document.head.appendChild(s);
+    }).catch(() => {
+      alert('캡처 라이브러리 로딩 실패. 인터넷 연결을 확인해주세요.');
+      if (btn) { btn.disabled = false; btn.textContent = origTxt; }
+      return;
+    });
+  }
+
+  try {
+    const canvas = await html2canvas(target, {
+      scale: 2, backgroundColor: '#f0f2f5', useCORS: true, logging: false
+    });
+    canvas.toBlob(async blob => {
+      try {
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        if (btn) btn.textContent = '✅ 클립보드 복사됨!';
+      } catch(e) {
+        // 클립보드 API 미지원 시 다운로드로 대체
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = `전시대배정_${adminYM}.png`; a.click();
+        URL.revokeObjectURL(url);
+        if (btn) btn.textContent = '✅ 이미지 저장됨!';
+      }
+      setTimeout(() => { if (btn) { btn.textContent = origTxt; btn.disabled = false; } }, 2500);
+    });
+  } catch(err) {
+    alert('캡처 실패: ' + err.message);
+    if (btn) { btn.disabled = false; btn.textContent = origTxt; }
+  }
+}
+
+async function runAssignment(ym) {
+  const btns = document.querySelectorAll('.result-action-bar .btn-primary');
+  btns.forEach(b => { b.disabled = true; b.textContent = '⏳ 배정 중...'; });
+
+  const snap = await db.ref(`submissions/${ym}`).get();
+  submissions = snap.val() || {};
+  const snapR = await db.ref(`rotation/${ym}`).get();
+  const prevRotation = snapR.val() || {};
+
+  // 이전 달 확정 배정 횟수 로드 (공평성 참고)
+  const [y, m] = ym.split('-').map(Number);
+  const prevYM  = new Date(y, m - 2, 1);
+  const prevYMStr = `${prevYM.getFullYear()}-${String(prevYM.getMonth()+1).padStart(2,'0')}`;
+  const snapPrev  = await db.ref(`confirmedAssignments/${prevYMStr}`).get();
+  const prevConfirmed = snapPrev.val() || {};
+  const prevCounts = {};
+  for (const data of Object.values(prevConfirmed)) {
+    if (!data?.teams) continue;
+    for (const team of data.teams) {
+      for (const x of (team.members || [])) {
+        prevCounts[x.name] = (prevCounts[x.name] || 0) + 1;
+      }
+    }
+  }
+
+  const result = autoAssign(submissions, members, prevRotation, ym, prevCounts);
+  await db.ref(`assignments/${ym}`).set(result.assignments);
+  await db.ref(`rotation/${ym}`).set(result.rotation);
+  assignments = result.assignments;
+  assignEditMode = false;
+  await renderAssignTab(ym);
+}
+
+// ──────────────────────────────────────────────
+//  자동 배정 알고리즘
+// ──────────────────────────────────────────────
+function autoAssign(subs, mems, prevRotation, ym, prevCounts = {}) {
+  const slotApplicants = {};
+  for (const [name, d] of Object.entries(subs)) {
+    if (!d || !d.slots) continue;
+    for (const volSlotKey of d.slots) {
+      const [volSlotId, dateStr] = volSlotKey.split('__');
+      if (volSlotId === 'sat-aft') {
+        const k1 = `sat-aft-1__${dateStr}`;
+        const k8 = `sat-aft-8__${dateStr}`;
+        if (!slotApplicants[k1]) slotApplicants[k1] = [];
+        if (!slotApplicants[k8]) slotApplicants[k8] = [];
+        if (!slotApplicants[k1].includes(name)) slotApplicants[k1].push(name);
+        if (!slotApplicants[k8].includes(name)) slotApplicants[k8].push(name);
+      } else {
+        if (!slotApplicants[volSlotKey]) slotApplicants[volSlotKey] = [];
+        if (!slotApplicants[volSlotKey].includes(name)) slotApplicants[volSlotKey].push(name);
+      }
+    }
+  }
+
+  // 이번 달 배정 횟수 (이전 달 확정 데이터도 가중치로 반영)
+  const assignCount = {};
+  for (const m of Object.values(mems)) {
+    assignCount[m.name] = (prevCounts[m.name] || 0) * 0.5; // 이전 달은 50% 가중치
+  }
+
+  // 인도자 로테이션
+  const rotation = { ...prevRotation };
+  if (!rotation.lastLeaderIdx) rotation.lastLeaderIdx = {};
+
+  const resultAssignments = {};
+
+  // 토요일 슬롯 쌍 처리 (공평하게 배정)
+  // sat 날짜별로 1공구/8공구를 한 번에 처리
+  const satDates = new Set();
+  for (const k of Object.keys(slotApplicants)) {
+    if (k.startsWith('sat-aft-')) {
+      const dateStr = k.split('__')[1];
+      satDates.add(dateStr);
+    }
+  }
+
+  // 토요일 날짜별 처리
+  for (const dateStr of satDates) {
+    const k1 = `sat-aft-1__${dateStr}`;
+    const k8 = `sat-aft-8__${dateStr}`;
+    const allApplicants = [...new Set([...(slotApplicants[k1]||[]), ...(slotApplicants[k8]||[])])];
+
+    const satResult = assignSatSlots(allApplicants, mems, assignCount, rotation, dateStr);
+    if (satResult.zone1) resultAssignments[k1] = satResult.zone1;
+    if (satResult.zone8) resultAssignments[k8] = satResult.zone8;
+
+    // 배정 횟수 업데이트
+    [satResult.zone1, satResult.zone8].forEach(zone => {
+      if (!zone) return;
+      zone.teams.forEach(team => {
+        team.members?.forEach(x => {
+          if (assignCount[x.name] !== undefined) assignCount[x.name]++;
+          else assignCount[x.name] = 1;
+        });
+      });
+    });
+  }
+
+  // 일반 슬롯 처리
+  const normalSlotKeys = Object.keys(slotApplicants).filter(k => !k.startsWith('sat-aft-'));
+  for (const slotKey of normalSlotKeys.sort()) {
+    const applicantNames = slotApplicants[slotKey];
+    const [slotId] = slotKey.split('__');
+    const slotDef = ASSIGN_SLOTS.find(s => s.id === slotId);
+    if (!slotDef) continue;
+
+    const assigned = assignSlot(applicantNames, mems, assignCount, rotation, slotId, MAX_PER_SLOT);
+    resultAssignments[slotKey] = assigned;
+    assigned.teams.forEach(team => {
+      team.members?.forEach(x => {
+        if (assignCount[x.name] !== undefined) assignCount[x.name]++;
+        else assignCount[x.name] = 1;
+      });
+    });
+  }
+
+  // 공평성 보정: 신청했지만 0회 배정된 사람 처리 (다음 배정 우선순위 기록)
+  const submittedNames = Object.keys(subs);
+  const zeroAssigned = submittedNames.filter(n => (assignCount[n] || 0) === 0);
+  rotation.priorityNext = zeroAssigned;
+
+  return { assignments: resultAssignments, rotation };
+}
+
+function assignSlot(applicantNames, mems, assignCount, rotation, slotId, maxCount) {
+  const memMap = {};
+  for (const [id, m] of Object.entries(mems)) memMap[m.name] = { id, ...m };
+
+  // 후보 목록
+  let candidates = applicantNames.map(n => memMap[n]).filter(Boolean);
+
+  // 공평성 보정: priorityNext에 있는 사람 먼저
+  const priority = rotation.priorityNext || [];
+  candidates.sort((a, b) => {
+    const pa = priority.includes(a.name) ? 0 : 1;
+    const pb = priority.includes(b.name) ? 0 : 1;
+    if (pa !== pb) return pa - pb;
+    return (assignCount[a.name] || 0) - (assignCount[b.name] || 0);
+  });
+
+  // 인도자 배정
+  let leader = null;
+  const leaderCandidates = candidates.filter(c => c.gender === '형제' && c.canLead);
+  if (leaderCandidates.length > 0) {
+    // 배정 횟수 적은 순, 동순위면 로테이션
+    leaderCandidates.sort((a, b) => (assignCount[a.name]||0) - (assignCount[b.name]||0));
+    const minCount = assignCount[leaderCandidates[0].name] || 0;
+    const tied = leaderCandidates.filter(c => (assignCount[c.name]||0) === minCount);
+    const lastIdx = rotation.lastLeaderIdx?.[slotId] ?? -1;
+    const nextIdx = (lastIdx + 1) % tied.length;
+    leader = tied[nextIdx];
+    if (!rotation.lastLeaderIdx) rotation.lastLeaderIdx = {};
+    rotation.lastLeaderIdx[slotId] = nextIdx;
+  }
+
+  // 나머지 배정 (인도자 제외)
+  const remaining = candidates.filter(c => c.name !== leader?.name);
+  // 파이오니아 우선, 배정 횟수 적은 순, 동순위 랜덤
+  remaining.sort((a, b) => {
+    if (a.isPioneer !== b.isPioneer) return a.isPioneer ? -1 : 1;
+    const diff = (assignCount[a.name]||0) - (assignCount[b.name]||0);
+    if (diff !== 0) return diff;
+    return Math.random() - 0.5;
+  });
+
+  const picked = remaining.slice(0, leader ? maxCount - 1 : maxCount);
+  const allPicked = leader ? [leader, ...picked] : picked;
+
+  const teams = buildTeams(allPicked, leader, mems);
+  return { teams };
+}
+
+function assignSatSlots(applicantNames, mems, assignCount, rotation, dateStr) {
+  const memMap = {};
+  for (const [id, m] of Object.entries(mems)) memMap[m.name] = { id, ...m };
+  const candidates = applicantNames.map(n => memMap[n]).filter(Boolean);
+  const priority = rotation.priorityNext || [];
+
+  // 인도자 배정 (1공구, 8공구 각각)
+  const leaderCandidates = candidates.filter(c => c.gender === '형제' && c.canLead);
+  leaderCandidates.sort((a, b) => {
+    const pa = priority.includes(a.name) ? 0 : 1;
+    const pb = priority.includes(b.name) ? 0 : 1;
+    if (pa !== pb) return pa - pb;
+    return (assignCount[a.name]||0) - (assignCount[b.name]||0);
+  });
+
+  let leader1 = null, leader8 = null;
+  if (leaderCandidates.length >= 1) leader1 = leaderCandidates[0];
+  if (leaderCandidates.length >= 2) leader8 = leaderCandidates[1];
+
+  const usedLeaders = new Set([leader1?.name, leader8?.name].filter(Boolean));
+
+  // 커플 쌍 추출
+  const nonLeaders = candidates.filter(c => !usedLeaders.has(c.name));
+  const couples = []; // [{a, b}]
+  const singles = [];
+  const paired = new Set();
+  for (const m of nonLeaders) {
+    if (paired.has(m.name)) continue;
+    if (m.spouseId) {
+      const spouse = Object.values(mems).find(x => x.name !== m.name && /* id match */ true);
+      // find spouse by spouseId
+      const spouseEntry = Object.entries(mems).find(([id]) => id === m.spouseId);
+      if (spouseEntry) {
+        const spouseName = spouseEntry[1].name;
+        const spouseCand = nonLeaders.find(c => c.name === spouseName);
+        if (spouseCand && !paired.has(spouseCand.name)) {
+          couples.push({ a: m, b: spouseCand });
+          paired.add(m.name);
+          paired.add(spouseCand.name);
+          continue;
+        }
+      }
+    }
+    singles.push(m);
+  }
+  const solos = nonLeaders.filter(c => !paired.has(c.name) && !couples.some(cp => cp.a.name === c.name || cp.b.name === c.name));
+
+  // 총 12명 (각 6명씩) 배정
+  const zone1Members = leader1 ? [leader1] : [];
+  const zone8Members = leader8 ? [leader8] : [];
+  const usedNames = new Set([...zone1Members.map(x=>x.name), ...zone8Members.map(x=>x.name)]);
+
+  // 커플을 두 구역에 균등 배분
+  let c1 = 0, c8 = 0;
+  for (const couple of couples) {
+    const z1Free = MAX_PER_SLOT - zone1Members.length;
+    const z8Free = MAX_PER_SLOT - zone8Members.length;
+    if (z1Free >= 2 && (c1 <= c8 || z8Free < 2)) {
+      zone1Members.push(couple.a, couple.b);
+      c1++;
+    } else if (z8Free >= 2) {
+      zone8Members.push(couple.a, couple.b);
+      c8++;
+    }
+    usedNames.add(couple.a.name);
+    usedNames.add(couple.b.name);
+  }
+
+  // 나머지 개인 신청자 파이오니아 우선, 배정 횟수 적은 순
+  const remainingSingles = [...solos, ...singles.filter(s => !usedNames.has(s.name))];
+  remainingSingles.sort((a, b) => {
+    if (a.isPioneer !== b.isPioneer) return a.isPioneer ? -1 : 1;
+    return (assignCount[a.name]||0) - (assignCount[b.name]||0);
+  });
+
+  for (const m of remainingSingles) {
+    if (usedNames.has(m.name)) continue;
+    if (zone1Members.length <= zone8Members.length && zone1Members.length < MAX_PER_SLOT) {
+      zone1Members.push(m);
+    } else if (zone8Members.length < MAX_PER_SLOT) {
+      zone8Members.push(m);
+    } else if (zone1Members.length < MAX_PER_SLOT) {
+      zone1Members.push(m);
+    }
+    usedNames.add(m.name);
+  }
+
+  return {
+    zone1: zone1Members.length > 0 ? { teams: buildTeams(zone1Members, leader1, mems) } : null,
+    zone8: zone8Members.length > 0 ? { teams: buildTeams(zone8Members, leader8, mems) } : null,
+  };
+}
+
+// 팀 구성 — 무조건 2명씩 3팀 (총 6명)
+// 우선순위: 부부(커플) → 인도자와 파이오니아 먼저 → 나머지 순서대로
+function buildTeams(allMembers, leader, mems) {
+  if (allMembers.length === 0) return [];
+  const memMap = {};
+  for (const [id, m] of Object.entries(mems)) memMap[m.name] = { id, ...m };
+
+  // 1) 부부 쌍 추출
+  const coupleMap = {}; // name → spouseName (배정된 사람 중에서만)
+  const inList = new Set(allMembers.map(m => m.name));
+  for (const m of allMembers) {
+    const full = memMap[m.name] || m;
+    if (full.spouseId && !coupleMap[m.name]) {
+      const spouseEntry = Object.entries(mems).find(([id]) => id === full.spouseId);
+      if (spouseEntry && inList.has(spouseEntry[1].name)) {
+        coupleMap[m.name]              = spouseEntry[1].name;
+        coupleMap[spouseEntry[1].name] = m.name;
+      }
+    }
+  }
+
+  // 2) 6명으로 채우기 (실제 배정된 인원)
+  const pool = allMembers.slice(0, 6);
+
+  // 3) 팀 배분: 부부 우선으로 짝 짓고, 나머지 순서대로
+  const paired = new Set();
+  const pairs  = []; // [{m0, m1}]
+
+  // 인도자를 먼저 pool 앞으로 정렬 (leader가 항상 팀1에)
+  pool.sort((a, b) => {
+    if (leader && a.name === leader.name) return -1;
+    if (leader && b.name === leader.name) return 1;
+    return 0;
+  });
+
+  // 부부 쌍을 먼저 짝
+  for (const m of pool) {
+    if (paired.has(m.name)) continue;
+    const spouseName = coupleMap[m.name];
+    if (spouseName && inList.has(spouseName) && !paired.has(spouseName)) {
+      const spouse = pool.find(x => x.name === spouseName);
+      if (spouse) {
+        pairs.push([m, spouse]);
+        paired.add(m.name);
+        paired.add(spouseName);
+        continue;
+      }
+    }
+  }
+  // 나머지: 동성끼리 짝 (형제+형제, 자매+자매), 불가 시 혼성
+  const remain = pool.filter(m => !paired.has(m.name));
+  const brothers = remain.filter(m => (memMap[m.name]?.gender || m.gender) === '형제');
+  const sisters  = remain.filter(m => (memMap[m.name]?.gender || m.gender) === '자매');
+
+  for (let i = 0; i + 1 < brothers.length; i += 2) pairs.push([brothers[i], brothers[i + 1]]);
+  for (let i = 0; i + 1 < sisters.length;  i += 2) pairs.push([sisters[i],  sisters[i + 1]]);
+
+  // 동성 짝 후 남은 홀수 1명씩 혼성 처리
+  const leftover = [];
+  if (brothers.length % 2 === 1) leftover.push(brothers[brothers.length - 1]);
+  if (sisters.length  % 2 === 1) leftover.push(sisters[sisters.length - 1]);
+  for (let i = 0; i + 1 < leftover.length; i += 2) pairs.push([leftover[i], leftover[i + 1]]);
+  if (leftover.length % 2 === 1) pairs.push([leftover[leftover.length - 1], null]);
+
+  // 인도자가 포함된 쌍을 팀1로
+  const leaderPairIdx = leader
+    ? pairs.findIndex(p => p[0]?.name === leader.name || p[1]?.name === leader.name)
+    : -1;
+  if (leaderPairIdx > 0) {
+    const [lp] = pairs.splice(leaderPairIdx, 1);
+    pairs.unshift(lp);
+  }
+
+  // 4) 팀 객체로 변환 (최대 3팀)
+  return pairs.slice(0, 3).map(pair => ({
+    members: pair.map(m => m ? {
+      name: m.name,
+      gender: m.gender,
+      role: leader && m.name === leader.name ? 'leader' : 'member'
+    } : null).filter(Boolean)
+  }));
+}
+
+function chunkArr(arr, size) {
+  const res = [];
+  for (let i = 0; i < arr.length; i += size) res.push(arr.slice(i, i + size));
+  return res;
+}
+
+// ── 탭3: 통계 ──
+async function renderStatsTab(ym) {
+  const snapS = await db.ref(`submissions/${ym}`).get();
+  const subs  = snapS.val() || {};
+  // 확정 배정이 있으면 확정 데이터 우선, 없으면 임시 배정 사용
+  const snapC  = await db.ref(`confirmedAssignments/${ym}`).get();
+  const snapA  = await db.ref(`assignments/${ym}`).get();
+  const asgn   = (snapC.exists() ? snapC.val() : snapA.val()) || {};
+
+  const memberList = Object.values(members);
+
+  // 신청 횟수
+  const subCount = {};
+  for (const m of memberList) subCount[m.name] = 0;
+  for (const [name, d] of Object.entries(subs)) {
+    subCount[name] = d?.slots?.length || 0;
+  }
+
+  // 배정 횟수
+  const asnCount = {};
+  for (const m of memberList) asnCount[m.name] = 0;
+  for (const [slotKey, data] of Object.entries(asgn)) {
+    if (!data?.teams) continue;
+    for (const team of data.teams) {
+      for (const x of (team.members || [])) {
+        asnCount[x.name] = (asnCount[x.name] || 0) + 1;
+      }
+    }
+  }
+
+  // 인도자 현황
+  const leaderCount = {};
+  for (const [slotKey, data] of Object.entries(asgn)) {
+    if (!data?.teams) continue;
+    for (const team of data.teams) {
+      for (const x of (team.members || [])) {
+        if (x.role === 'leader') {
+          leaderCount[x.name] = (leaderCount[x.name] || 0) + 1;
+        }
+      }
+    }
+  }
+
+  const zeroSub = memberList.filter(m => (subCount[m.name]||0) === 0);
+  const zeroAsn = memberList.filter(m => (asnCount[m.name]||0) === 0);
+
+  const maxSub = Math.max(1, ...Object.values(subCount));
+  const maxAsn = Math.max(1, ...Object.values(asnCount));
+
+  const sortedBySub = [...memberList].sort((a,b) => (subCount[b.name]||0)-(subCount[a.name]||0));
+  const sortedByAsn = [...memberList].sort((a,b) => (asnCount[b.name]||0)-(asnCount[a.name]||0));
+  const leaders = memberList.filter(m => m.gender==='형제' && m.canLead);
+  const pioneers = memberList.filter(m => m.isPioneer);
+
+  let html = `
+    <div class="result-month-nav">
+      <button class="month-nav-btn" onclick="adminChangeMonth(-1)">◀</button>
+      <h3>${ymToLabel(ym)} 통계</h3>
+      <button class="month-nav-btn" onclick="adminChangeMonth(1)">▶</button>
+    </div>
+  `;
+
+  // 신청 현황
+  html += `<div class="card" style="margin-bottom:14px">
+    <div class="card-header">📋 신청 횟수 (많은 순)</div>
+    <table class="stat-table"><thead><tr><th>이름</th><th>성별</th><th>신청 횟수</th></tr></thead><tbody>`;
+  for (const m of sortedBySub) {
+    const cnt = subCount[m.name] || 0;
+    const pct = Math.round(cnt/maxSub*100);
+    const gc = m.gender==='형제'?'badge-b':'badge-s';
+    html += `<tr style="${cnt===0?'opacity:.5':''}">
+      <td style="font-weight:700">${m.name}</td>
+      <td><span class="badge ${gc}">${m.gender}</span></td>
+      <td>${cnt}회<div class="bar-wrap"><div class="bar-fill" style="width:${pct}%"></div></div></td>
+    </tr>`;
+  }
+  html += `</tbody></table></div>`;
+
+  // 배정 현황
+  html += `<div class="card" style="margin-bottom:14px">
+    <div class="card-header">🎯 배정 횟수 (많은 순)</div>
+    <table class="stat-table"><thead><tr><th>이름</th><th>성별</th><th>배정 횟수</th></tr></thead><tbody>`;
+  for (const m of sortedByAsn) {
+    const cnt = asnCount[m.name] || 0;
+    const pct = Math.round(cnt/maxAsn*100);
+    const gc = m.gender==='형제'?'badge-b':'badge-s';
+    html += `<tr style="${cnt===0?'opacity:.5':''}">
+      <td style="font-weight:700">${m.name}</td>
+      <td><span class="badge ${gc}">${m.gender}</span></td>
+      <td>${cnt}회<div class="bar-wrap"><div class="bar-fill" style="width:${pct}%"></div></div></td>
+    </tr>`;
+  }
+  html += `</tbody></table></div>`;
+
+  // 미신청/미배정
+  html += `<div class="summary-grid" style="grid-template-columns:1fr 1fr;margin-bottom:14px">
+    <div class="summary-card">
+      <div class="summary-num" style="color:#e53e3e">${zeroSub.length}</div>
+      <div class="summary-label">신청 0회</div>
+      <div style="font-size:.75em;color:#a0aec0;margin-top:6px">${zeroSub.map(m=>m.name).join(', ')||'없음'}</div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-num" style="color:#e53e3e">${zeroAsn.length}</div>
+      <div class="summary-label">배정 0회</div>
+      <div style="font-size:.75em;color:#a0aec0;margin-top:6px">${zeroAsn.map(m=>m.name).join(', ')||'없음'}</div>
+    </div>
+  </div>`;
+
+  // 인도자 로테이션
+  html += `<div class="card" style="margin-bottom:14px">
+    <div class="card-header">⭐ 인도자 로테이션</div>
+    <table class="stat-table"><thead><tr><th>이름</th><th>인도 횟수</th></tr></thead><tbody>`;
+  for (const m of leaders) {
+    const cnt = leaderCount[m.name] || 0;
+    html += `<tr><td style="font-weight:700">${m.name}</td><td>${cnt}회</td></tr>`;
+  }
+  html += `</tbody></table></div>`;
+
+  document.getElementById('tabStats').innerHTML = html;
+}
+
+// ── 탭4: 봉사자 관리 ──
+function renderMembersTab() {
+  const memberList = Object.entries(members).sort((a,b) => {
+    if (a[1].gender !== b[1].gender) return a[1].gender === '형제' ? -1 : 1;
+    return a[1].name.localeCompare(b[1].name, 'ko');
+  });
+
+  let html = `
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+    <h3 style="font-size:1em;font-weight:700">봉사자 관리 (${memberList.length}명)</h3>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <button class="btn btn-gray" style="padding:7px 12px;font-size:.82em" onclick="downloadExcelTemplate()">📥 양식 다운로드</button>
+      <button class="btn btn-success" style="padding:7px 12px;font-size:.82em" onclick="triggerExcelImport()">📂 엑셀 일괄 등록</button>
+      <button class="btn btn-primary" style="padding:7px 12px;font-size:.82em" onclick="openMemberModal(null)">+ 개별 추가</button>
+      <button class="btn btn-danger" style="padding:7px 12px;font-size:.82em;background:#fff5f5;color:#e53e3e;border:1px solid #fed7d7" onclick="cleanupOrphanSubmissions()">🗑️ 삭제된 계정 신청 정리</button>
+    </div>
+  </div>
+  <div style="background:#fffbeb;border:1px solid #f6e05e;border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:.82em;color:#744210;line-height:1.7">
+    📋 <b>엑셀 양식 열 순서:</b> 이름 · 성별(형제/자매) · 인도가능(O/X) · 파이오니아(O/X) · 배우자(이름)<br>
+    부부는 서로의 이름을 배우자 칸에 입력하면 자동 연결됩니다.
+  </div>
+  <div class="card">`;
+
+  for (const [id, m] of memberList) {
+    const gc = m.gender === '형제' ? 'badge-b' : 'badge-s';
+    const spouseName = m.spouseId ? (members[m.spouseId]?.name || '?') : null;
+    html += `<div class="member-row">
+      <div class="member-name">${m.name}</div>
+      <div class="member-tags">
+        <span class="badge ${gc}">${m.gender}</span>
+        ${m.canLead ? '<span class="badge badge-g">인도가능</span>' : ''}
+        ${m.isPioneer ? '<span class="badge badge-y">파이오니아</span>' : ''}
+        ${spouseName ? `<span class="badge" style="background:#fef3c7;color:#92400e">💑${spouseName}</span>` : ''}
+      </div>
+      <div class="member-actions">
+        <button class="edit-btn" onclick="openMemberModal('${id}')">수정</button>
+        <button class="edit-btn" style="background:#fef3c7;color:#92400e" onclick="resetMemberPin('${id}','${m.name}')">PIN초기화</button>
+        <button class="del-btn" onclick="deleteMember('${id}','${m.name}')">삭제</button>
+      </div>
+    </div>`;
+  }
+  html += '</div>';
+  document.getElementById('tabMembers').innerHTML = html;
+}
+
+// ── 봉사자 추가/수정 모달 ──
+function openMemberModal(memberId) {
+  editingMemberId = memberId;
+  const modal = document.getElementById('memberModal');
+  modal.classList.remove('hidden');
+  document.getElementById('modalTitle').textContent = memberId ? '봉사자 수정' : '봉사자 추가';
+
+  // 배우자 옵션 채우기
+  const spouseSelect = document.getElementById('mSpouse');
+  const targetGender = memberId ? (members[memberId]?.gender === '형제' ? '자매' : '형제') : null;
+  spouseSelect.innerHTML = '<option value="">없음</option>';
+  for (const [id, m] of Object.entries(members)) {
+    if (id === memberId) continue;
+    if (targetGender && m.gender !== targetGender) continue;
+    spouseSelect.innerHTML += `<option value="${id}">${m.name} (${m.gender})</option>`;
+  }
+
+  if (memberId && members[memberId]) {
+    const m = members[memberId];
+    document.getElementById('mName').value = m.name;
+    document.querySelector(`input[name=mGender][value="${m.gender}"]`).checked = true;
+    modalCanLead = m.canLead || false;
+    modalIsPioneer = m.isPioneer || false;
+    spouseSelect.value = m.spouseId || '';
+  } else {
+    document.getElementById('mName').value = '';
+    document.querySelector('input[name=mGender][value="형제"]').checked = true;
+    modalCanLead = false;
+    modalIsPioneer = false;
+    spouseSelect.value = '';
+  }
+  updateToggleUI();
+}
+
+function updateToggleUI() {
+  document.getElementById('tCanLead').classList.toggle('on', modalCanLead);
+  document.getElementById('tCannotLead').classList.toggle('on', !modalCanLead);
+  document.getElementById('tIsPioneer').classList.toggle('on', modalIsPioneer);
+  document.getElementById('tNotPioneer').classList.toggle('on', !modalIsPioneer);
+}
+
+function toggleField(field) {
+  if (field === 'canLead') { modalCanLead = true; }
+  else if (field === 'cannotLead') { modalCanLead = false; }
+  else if (field === 'pioneer') { modalIsPioneer = true; }
+  else if (field === 'notPioneer') { modalIsPioneer = false; }
+  updateToggleUI();
+}
+
+function closeMemberModal() {
+  document.getElementById('memberModal').classList.add('hidden');
+  editingMemberId = null;
+}
+
+function closeMemberModalOutside(e) {
+  if (e.target === document.getElementById('memberModal')) closeMemberModal();
+}
+
+async function saveMember() {
+  const name = document.getElementById('mName').value.trim();
+  if (!name) { alert('이름을 입력해주세요.'); return; }
+  const gender = document.querySelector('input[name=mGender]:checked').value;
+  const spouseId = document.getElementById('mSpouse').value || null;
+
+  const data = { name, gender, canLead: modalCanLead, isPioneer: modalIsPioneer, spouseId };
+
+  const updates = {};
+  let targetId = editingMemberId;
+
+  if (!targetId) {
+    targetId = db.ref('members').push().key;
+  }
+  updates[`members/${targetId}`] = data;
+
+  // 이전 배우자 관계 해제
+  if (editingMemberId && members[editingMemberId]?.spouseId) {
+    const oldSpouseId = members[editingMemberId].spouseId;
+    if (oldSpouseId !== spouseId) {
+      updates[`members/${oldSpouseId}/spouseId`] = null;
+    }
+  }
+
+  // 새 배우자 연결
+  if (spouseId) {
+    // 새 배우자의 기존 배우자 관계 해제
+    const newSpouse = members[spouseId];
+    if (newSpouse?.spouseId && newSpouse.spouseId !== targetId) {
+      updates[`members/${newSpouse.spouseId}/spouseId`] = null;
+    }
+    updates[`members/${spouseId}/spouseId`] = targetId;
+  }
+
+  await db.ref().update(updates);
+  await loadMembers();
+  closeMemberModal();
+  renderMembersTab();
+}
+
+async function cleanupOrphanSubmissions() {
+  const memberNames = new Set(Object.values(members).map(m => m.name));
+  const subSnap = await db.ref('submissions').get();
+  const allSubs = subSnap.val() || {};
+  const updates = {};
+  let count = 0;
+  for (const ym of Object.keys(allSubs)) {
+    for (const name of Object.keys(allSubs[ym] || {})) {
+      if (!memberNames.has(name)) {
+        updates[`submissions/${ym}/${name}`] = null;
+        count++;
+      }
+    }
+  }
+  if (count === 0) { alert('삭제된 계정의 신청 내역이 없습니다.'); return; }
+  if (!confirm(`삭제된 계정의 신청 내역 ${count}건을 정리하시겠습니까?`)) return;
+  await db.ref().update(updates);
+  alert(`${count}건 정리 완료`);
+}
+
+async function deleteMember(id, name) {
+  if (!confirm(`'${name}'을(를) 삭제하시겠습니까?`)) return;
+  const m = members[id];
+  const updates = {};
+  updates[`members/${id}`] = null;
+  updates[`memberPins/${id}`] = null;
+  if (m?.spouseId) updates[`members/${m.spouseId}/spouseId`] = null;
+
+  // 해당 멤버의 모든 월 신청 데이터 삭제
+  const subSnap = await db.ref('submissions').get();
+  const allSubs = subSnap.val() || {};
+  for (const ym of Object.keys(allSubs)) {
+    if (allSubs[ym] && allSubs[ym][name] !== undefined) updates[`submissions/${ym}/${name}`] = null;
+  }
+
+  await db.ref().update(updates);
+  await loadMembers();
+  renderMembersTab();
+}
+
+// ──────────────────────────────────────────────
+//  날짜/월 헬퍼
+// ──────────────────────────────────────────────
+function getCurrentYM() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+}
+
+function getNextYM() {
+  const now = new Date();
+  const next = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  return `${next.getFullYear()}-${String(next.getMonth()+1).padStart(2,'0')}`;
+}
+
+function getOffsetYM(offset) {
+  const now = new Date();
+  const target = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+  return `${target.getFullYear()}-${String(target.getMonth()+1).padStart(2,'0')}`;
+}
+
+function ymToLabel(ym) {
+  const [y, m] = ym.split('-');
+  return `${y}년 ${parseInt(m)}월`;
+}
+
+// ──────────────────────────────────────────────
+//  엑셀 일괄 등록
+// ──────────────────────────────────────────────
+let excelParsedRows = [];
+
+// 파일창은 반드시 동기 컨텍스트에서 열어야 함 (async 불가)
+function triggerExcelImport() {
+  const el = document.getElementById('excelFileInput');
+  el.value = '';
+  el.click(); // 사용자 클릭 이벤트 동기 컨텍스트에서 호출
+}
+
+// XLSX 동적 로드 — 여러 CDN 순차 시도
+function ensureXLSX() {
+  if (typeof XLSX !== 'undefined') return Promise.resolve();
+  const urls = [
+    'https://unpkg.com/xlsx@0.20.3/dist/xlsx.full.min.js',
+    'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
+    'https://cdn.jsdelivr.net/npm/xlsx@0.20.3/dist/xlsx.full.min.js'
+  ];
+  function tryNext(i) {
+    if (i >= urls.length) return Promise.reject(new Error('SheetJS를 불러올 수 없습니다 (모든 CDN 실패)'));
+    return new Promise((res, rej) => {
+      if (typeof XLSX !== 'undefined') { res(); return; }
+      const s = document.createElement('script');
+      s.src = urls[i];
+      s.onload  = () => res();
+      s.onerror = () => tryNext(i + 1).then(res, rej);
+      document.head.appendChild(s);
+    });
+  }
+  return tryNext(0);
+}
+
+function handleExcelFile(e) {
+  const file = e.target.files[0];
+  if (!file) { alert('파일을 인식하지 못했습니다. 다시 시도해주세요.'); return; }
+
+  ensureXLSX()
+    .then(() => {
+      const reader = new FileReader();
+      reader.onerror = () => alert('파일 읽기 오류가 발생했습니다.');
+      reader.onload = function(ev) {
+        try {
+          const data = new Uint8Array(ev.target.result);
+          const wb   = XLSX.read(data, { type: 'array' });
+          const ws   = wb.Sheets[wb.SheetNames[0]];
+          const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+          parseAndPreviewExcel(rows);
+        } catch(err) {
+          console.error('엑셀 파싱 오류:', err);
+          alert('파일을 읽을 수 없습니다.\n.xlsx 파일인지 확인해주세요.\n\n오류: ' + err.message);
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    })
+    .catch(err => {
+      alert('엑셀 라이브러리를 불러오지 못했습니다.\n인터넷 연결을 확인해주세요.\n\n오류: ' + err.message);
+    });
+}
+
+function parseAndPreviewExcel(rawRows) {
+  // 빈 행 제거 후 헤더 찾기
+  const nonEmpty = rawRows.filter(r => r.some(c => String(c).trim() !== ''));
+  if (nonEmpty.length < 2) { alert('데이터가 부족합니다. (헤더 + 1행 이상 필요)'); return; }
+
+  const headers = nonEmpty[0].map(h => String(h).trim());
+  const col = (candidates) => headers.findIndex(h => candidates.includes(h));
+
+  const nameIdx    = col(['이름','name','성명']);
+  const genderIdx  = col(['성별','gender']);
+  const leadIdx    = col(['인도가능','인도','canLead','리더']);
+  const pioneerIdx = col(['파이오니아','파이오','pioneer','선구자']);
+  const spouseIdx  = col(['배우자','배우자이름','spouse']);
+
+  if (nameIdx === -1 || genderIdx === -1) {
+    alert('엑셀 형식 오류: "이름"과 "성별" 열이 반드시 있어야 합니다.\n양식 다운로드 후 사용해주세요.');
+    return;
+  }
+
+  const existingNames = new Set(Object.values(members).map(m => m.name));
+  const parsed = [];
+
+  for (let i = 1; i < nonEmpty.length; i++) {
+    const row = nonEmpty[i];
+    const name    = String(row[nameIdx]    ?? '').trim();
+    const gender  = String(row[genderIdx]  ?? '').trim();
+    const canLead = leadIdx    !== -1 ? toBoolXL(row[leadIdx])    : false;
+    const isPioneer = pioneerIdx !== -1 ? toBoolXL(row[pioneerIdx]) : false;
+    const spouseName = spouseIdx !== -1 ? String(row[spouseIdx] ?? '').trim() : '';
+
+    if (!name) continue;
+
+    const validGender = gender === '형제' || gender === '자매';
+    const isDup = existingNames.has(name);
+
+    parsed.push({ name, gender, canLead, isPioneer, spouseName,
+      valid: !!(name && validGender), isDup,
+      errMsg: !name ? '이름 없음' : !validGender ? '성별 오류' : '' });
+  }
+
+  if (parsed.length === 0) { alert('유효한 데이터 행이 없습니다.'); return; }
+
+  excelParsedRows = parsed;
+  showExcelPreview(parsed);
+}
+
+function toBoolXL(val) {
+  const s = String(val ?? '').trim().toUpperCase();
+  return ['O','Y','1','TRUE','예','가능','O'].includes(s);
+}
+
+function showExcelPreview(rows) {
+  const validRows  = rows.filter(r => r.valid);
+  const newRows    = validRows.filter(r => !r.isDup);
+  const dupRows    = validRows.filter(r => r.isDup);
+  const errRows    = rows.filter(r => !r.valid);
+
+  let html = `
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
+      <span class="badge badge-g">신규 ${newRows.length}명</span>
+      ${dupRows.length  ? `<span class="badge badge-y">덮어쓰기 ${dupRows.length}명</span>` : ''}
+      ${errRows.length  ? `<span class="badge" style="background:#fff5f5;color:#c53030">오류 제외 ${errRows.length}행</span>` : ''}
+    </div>
+    <div style="overflow-x:auto;max-height:320px;overflow-y:auto;border:1px solid #e2e8f0;border-radius:10px">
+    <table class="excel-preview-tbl">
+      <thead><tr>
+        <th>이름</th><th>성별</th><th>인도가능</th><th>파이오니아</th><th>배우자</th><th>상태</th>
+      </tr></thead>
+      <tbody>`;
+
+  for (const r of rows) {
+    const rowCls = !r.valid ? 'row-err' : r.isDup ? 'row-dup' : 'row-ok';
+    const status = !r.valid
+      ? `<span style="color:#e53e3e;font-size:.78em">⚠️ ${r.errMsg}</span>`
+      : r.isDup
+        ? `<span style="color:#d97706;font-size:.78em">🔄 덮어쓰기</span>`
+        : `<span style="color:#38a169;font-size:.78em">✅ 신규</span>`;
+    html += `<tr class="${rowCls}">
+      <td style="font-weight:700">${r.name||'-'}</td>
+      <td>${r.gender||'<span style="color:#e53e3e">?</span>'}</td>
+      <td style="text-align:center">${r.canLead   ? '✅' : '-'}</td>
+      <td style="text-align:center">${r.isPioneer ? '✅' : '-'}</td>
+      <td>${r.spouseName||'-'}</td>
+      <td>${status}</td>
+    </tr>`;
+  }
+  html += '</tbody></table></div>';
+
+  if (errRows.length > 0) {
+    html += `<div style="background:#fffbeb;border:1px solid #f6e05e;border-radius:8px;padding:10px;margin-top:10px;font-size:.82em;color:#744210">
+      ⚠️ 오류 행은 등록에서 제외됩니다. 성별 칸에 <b>형제</b> 또는 <b>자매</b>를 정확히 입력했는지 확인해주세요.
+    </div>`;
+  }
+
+  document.getElementById('excelPreviewContent').innerHTML = html;
+  const btn = document.getElementById('excelConfirmBtn');
+  btn.disabled = validRows.length === 0;
+  btn.textContent = `${validRows.length}명 등록하기`;
+  document.getElementById('excelModal').classList.remove('hidden');
+}
+
+function closeExcelModal() {
+  document.getElementById('excelModal').classList.add('hidden');
+  excelParsedRows = [];
+}
+function closeExcelModalOutside(e) {
+  if (e.target === document.getElementById('excelModal')) closeExcelModal();
+}
+
+async function confirmExcelImport() {
+  const validRows = excelParsedRows.filter(r => r.valid);
+  if (validRows.length === 0) return;
+
+  const btn = document.getElementById('excelConfirmBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ 등록 중...';
+
+  // name → id 맵 (기존 + 신규)
+  const nameToId = {};
+  for (const [id, m] of Object.entries(members)) nameToId[m.name] = id;
+
+  // 신규 멤버 ID 먼저 확보 (배우자 연결에 필요)
+  for (const row of validRows) {
+    if (!nameToId[row.name]) nameToId[row.name] = db.ref('members').push().key;
+  }
+
+  const updates = {};
+
+  // 완전한 객체로 한 번에 upsert (spouseId 포함)
+  for (const row of validRows) {
+    const id = nameToId[row.name];
+    const spouseId = row.spouseName ? (nameToId[row.spouseName] ?? null) : null;
+    updates[`members/${id}`] = {
+      name: row.name, gender: row.gender,
+      canLead: row.canLead, isPioneer: row.isPioneer,
+      spouseId
+    };
+  }
+
+  // 배우자가 기존 멤버(미등록 대상)인 경우 → 별도 경로로만 spouseId 업데이트
+  const spouseUpdates = {};
+  for (const row of validRows) {
+    if (!row.spouseName) continue;
+    const spouseId = nameToId[row.spouseName];
+    if (!spouseId) continue;
+    const spouseBeingImported = validRows.some(r => r.name === row.spouseName);
+    if (!spouseBeingImported) {
+      spouseUpdates[`members/${spouseId}/spouseId`] = nameToId[row.name];
+    }
+  }
+
+  try {
+    await db.ref().update(updates);
+    if (Object.keys(spouseUpdates).length > 0) await db.ref().update(spouseUpdates);
+    await loadMembers();
+    closeExcelModal();
+    renderMembersTab();
+    alert(`✅ ${validRows.length}명이 등록되었습니다.`);
+  } catch(e) {
+    console.error('등록 오류:', e);
+    btn.disabled = false;
+    btn.textContent = `${validRows.length}명 등록하기`;
+    alert('❌ 등록 실패\n\n오류: ' + e.message);
+  }
+}
+
+function downloadExcelTemplate() {
+  if (typeof XLSX === 'undefined') {
+    // XLSX 없으면 CSV로 대체 다운로드
+    const csv = '\uFEFF이름,성별,인도가능,파이오니아,배우자\n홍길동,형제,O,X,홍길순\n홍길순,자매,X,O,홍길동\n김봉사,형제,X,O,\n이자매,자매,X,O,';
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = '봉사자_등록양식.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    return;
+  }
+  const ws = XLSX.utils.aoa_to_sheet([
+    ['이름', '성별', '인도가능', '파이오니아', '배우자'],
+    ['홍길동', '형제', 'O', 'X', '홍길순'],
+    ['홍길순', '자매', 'X', 'O', '홍길동'],
+    ['김봉사', '형제', 'X', 'X', ''],
+    ['이자매', '자매', 'X', 'O', ''],
+  ]);
+  // 열 너비 설정
+  ws['!cols'] = [{wch:12},{wch:8},{wch:10},{wch:12},{wch:12}];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '봉사자');
+  XLSX.writeFile(wb, '봉사자_등록양식.xlsx');
+}
+
+// ──────────────────────────────────────────────
+//  데이터 리셋 (관리자 전용 — 브라우저 콘솔에서 호출)
+//  예: resetMonthData('2026-03')
+// ──────────────────────────────────────────────
+async function resetMonthData(ym) {
+  if (!isAdmin) { alert('관리자로 로그인 후 실행하세요.'); return; }
+  if (!confirm(`⚠️ ${ymToLabel(ym)}의 신청현황과 배정 데이터를 모두 삭제합니다.\n되돌릴 수 없습니다. 계속하시겠습니까?`)) return;
+  await db.ref().update({
+    [`submissions/${ym}`]: null,
+    [`assignments/${ym}`]: null,
+    [`confirmedAssignments/${ym}`]: null,
+    [`rotation/${ym}`]: null,
+  });
+  alert(`${ymToLabel(ym)} 데이터가 초기화되었습니다.`);
+  if (currentAdminTab) await adminTab(currentAdminTab, null);
+}
+
+// ──────────────────────────────────────────────
+//  앱 시작
+// ──────────────────────────────────────────────
+init();
+</script>
+</body>
+</html>
