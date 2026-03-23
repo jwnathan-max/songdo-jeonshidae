@@ -634,8 +634,7 @@ const db = firebase.database();
 // ──────────────────────────────────────────────
 //  상수
 // ──────────────────────────────────────────────
-// 관리자 비밀번호 — SHA-256 해시로 저장 (소스코드에 평문 노출 방지)
-// 현재 비밀번호: 1234 → 변경 시 브라우저 콘솔에서 hashPw('새비밀번호') 실행 후 아래 해시값 교체
+// 관리자 비밀번호 — SHA-256 해시로 저장 (변경 시 콘솔에서 hashPw('새비밀번호') 실행 후 교체)
 const ADMIN_PW_HASH = '5a8b00dc95535e85f7eeaf9532050aba742f1333b960166d47f094155d4a9df3';
 let adminFailCount = 0;   // 로그인 실패 횟수
 let adminLockUntil = 0;   // 잠금 해제 시각 (ms)
@@ -2297,6 +2296,20 @@ async function runAssignment(ym) {
   assignments = result.assignments;
   assignEditMode = false;
   await renderAssignTab(ym);
+
+  // 자동 보정 결과 표시
+  const reportLines = [];
+  if (result.adjustLog?.length > 0) {
+    reportLines.push(`▼ 0회 배정자 자동 조정 (${result.adjustLog.length}건)`);
+    result.adjustLog.forEach(l => reportLines.push('  • ' + l));
+  }
+  if (result.validationIssues?.length > 0) {
+    reportLines.push(`▼ 지침 검증 수정사항 (${result.validationIssues.length}건)`);
+    result.validationIssues.forEach(l => reportLines.push('  • ' + l));
+  }
+  if (reportLines.length > 0) {
+    alert('배정 완료 — 자동 보정 내역\n\n' + reportLines.join('\n'));
+  }
 }
 
 // ──────────────────────────────────────────────
@@ -2385,12 +2398,24 @@ function autoAssign(subs, mems, prevRotation, ym, prevCounts = {}) {
     }
   }
 
-  // 공평성 보정: 신청했지만 0회 배정된 사람 처리 (다음 배정 우선순위 기록)
-  const submittedNames = Object.keys(subs);
-  const zeroAssigned = submittedNames.filter(n => (assignCount[n] || 0) === 0);
-  rotation.priorityNext = zeroAssigned;
+  // ── 사후 조정: 이번 달 신청했지만 0회 배정된 사람 즉시 보정 ──
+  const adjustResult = postAssignAdjust(resultAssignments, slotApplicants, mems);
 
-  return { assignments: resultAssignments, rotation };
+  // 공평성 보정: 조정 후에도 0회인 신청자 → 다음 달 우선순위 기록
+  const assignedThisMonth = new Set();
+  for (const data of Object.values(resultAssignments)) {
+    if (!data?.teams) continue;
+    for (const team of data.teams) {
+      for (const x of (team.members || [])) assignedThisMonth.add(x.name);
+    }
+  }
+  const submittedNames = Object.keys(subs);
+  rotation.priorityNext = submittedNames.filter(n => !assignedThisMonth.has(n));
+
+  // ── 지침 검증 및 자동 수정 ──
+  const validationResult = validateAndFixAssignment(resultAssignments, mems);
+
+  return { assignments: resultAssignments, rotation, adjustLog: adjustResult.adjustLog, validationIssues: validationResult.issues };
 }
 
 function assignSlot(applicantNames, mems, assignCount, leaderCount, rotation, slotId, maxCount) {
@@ -2429,8 +2454,11 @@ function assignSlot(applicantNames, mems, assignCount, leaderCount, rotation, sl
 
   // 나머지 배정 (인도자 제외)
   const remaining = candidates.filter(c => c.name !== leader?.name);
-  // 파이오니아 우선, 배정 횟수 적은 순, 동순위 랜덤
+  // 우선순위: 이전 달 0회 배정자(priorityNext) → 파이오니아 → 배정 횟수 적은 순 → 랜덤
   remaining.sort((a, b) => {
+    const pa = priority.includes(a.name) ? 0 : 1;
+    const pb = priority.includes(b.name) ? 0 : 1;
+    if (pa !== pb) return pa - pb;
     if (a.isPioneer !== b.isPioneer) return a.isPioneer ? -1 : 1;
     const diff = (assignCount[a.name]||0) - (assignCount[b.name]||0);
     if (diff !== 0) return diff;
@@ -2523,9 +2551,12 @@ function assignSatSlots(applicantNames, mems, assignCount, leaderCount, rotation
     usedNames.add(couple.b.name);
   }
 
-  // 나머지 개인 신청자 파이오니아 우선, 배정 횟수 적은 순
+  // 나머지 개인 신청자: 이전 달 0회 배정자 → 파이오니아 → 배정 횟수 적은 순
   const remainingSingles = [...solos, ...singles.filter(s => !usedNames.has(s.name))];
   remainingSingles.sort((a, b) => {
+    const pa = priority.includes(a.name) ? 0 : 1;
+    const pb = priority.includes(b.name) ? 0 : 1;
+    if (pa !== pb) return pa - pb;
     if (a.isPioneer !== b.isPioneer) return a.isPioneer ? -1 : 1;
     return (assignCount[a.name]||0) - (assignCount[b.name]||0);
   });
@@ -2645,6 +2676,214 @@ function chunkArr(arr, size) {
   const res = [];
   for (let i = 0; i < arr.length; i += size) res.push(arr.slice(i, i + size));
   return res;
+}
+
+// ── 사후 조정: 신청했지만 0회 배정된 사람 보정 ──
+function postAssignAdjust(resultAssignments, slotApplicants, mems) {
+  const memMap = {};
+  for (const [id, m] of Object.entries(mems)) memMap[m.name] = { id, ...m };
+  const adjustLog = [];
+
+  // 이번 달 실제 배정된 사람 집합
+  const assignedSet = new Set();
+  for (const data of Object.values(resultAssignments)) {
+    if (!data?.teams) continue;
+    for (const team of data.teams) {
+      for (const x of (team.members || [])) assignedSet.add(x.name);
+    }
+  }
+
+  // 신청했지만 0회 배정된 사람 목록
+  const applicantSet = new Set();
+  for (const names of Object.values(slotApplicants)) {
+    for (const n of names) applicantSet.add(n);
+  }
+  const zeroList = [...applicantSet].filter(n => !assignedSet.has(n));
+  if (zeroList.length === 0) return { adjustLog };
+
+  // 슬롯별 현재 배정 인원 수
+  const countInSlot = (sk) =>
+    (resultAssignments[sk]?.teams || []).reduce((s, t) => s + (t.members?.length || 0), 0);
+
+  // 이번 달 각 사람의 실제 배정 횟수 (교체 기준용)
+  const thisMonthCount = {};
+  for (const [, data] of Object.entries(resultAssignments)) {
+    if (!data?.teams) continue;
+    for (const team of data.teams) {
+      for (const x of (team.members || [])) {
+        thisMonthCount[x.name] = (thisMonthCount[x.name] || 0) + 1;
+      }
+    }
+  }
+
+  for (const personName of zeroList) {
+    const person = memMap[personName];
+    if (!person) continue;
+
+    // 신청한 슬롯들: 현재 배정 인원 적은 순 (빈 자리 우선)
+    const appliedSlots = Object.keys(slotApplicants)
+      .filter(sk => slotApplicants[sk].includes(personName))
+      .sort((a, b) => countInSlot(a) - countInSlot(b));
+
+    let placed = false;
+    for (const slotKey of appliedSlots) {
+      // 이미 이 슬롯에 배정됐으면 완료
+      if ((resultAssignments[slotKey]?.teams || []).some(t => t.members?.some(x => x.name === personName))) {
+        placed = true; break;
+      }
+      // 토요일: 같은 날 다른 구역에 이미 있으면 완료 처리
+      if (slotKey.startsWith('sat-aft-')) {
+        const sibKey = slotKey.startsWith('sat-aft-1__')
+          ? slotKey.replace('sat-aft-1__', 'sat-aft-8__')
+          : slotKey.replace('sat-aft-8__', 'sat-aft-1__');
+        if ((resultAssignments[sibKey]?.teams || []).some(t => t.members?.some(x => x.name === personName))) {
+          placed = true; break;
+        }
+      }
+
+      const curCount = countInSlot(slotKey);
+      if (!resultAssignments[slotKey]) resultAssignments[slotKey] = { teams: [] };
+      const sd = resultAssignments[slotKey];
+
+      const [sid, ds] = slotKey.split('__');
+      const slotLabel = ASSIGN_SLOTS.find(s => s.id === sid)?.label || sid;
+      const [, dm, dd] = (ds || '').split('-');
+      const dateLabel = `${parseInt(dm)||''}/${parseInt(dd)||''}`;
+
+      if (curCount < MAX_PER_SLOT) {
+        // 빈 자리: 마지막 팀에 합류하거나 새 팀 생성
+        const lastTeam = sd.teams[sd.teams.length - 1];
+        if (lastTeam && lastTeam.members.length < 2) {
+          lastTeam.members.push({ name: personName, gender: person.gender, role: 'member' });
+        } else {
+          sd.teams.push({ members: [{ name: personName, gender: person.gender, role: 'member' }] });
+        }
+        thisMonthCount[personName] = (thisMonthCount[personName] || 0) + 1;
+        adjustLog.push(`${personName} → ${slotLabel} ${dateLabel} (빈 자리)`);
+        placed = true; break;
+      }
+
+      // 꽉 찬 슬롯 — 가장 많이 배정된 비파이오니아 일반 멤버와 교체
+      const allMem = sd.teams.flatMap(t => t.members || []);
+      const swapPool = allMem.filter(x => {
+        const m = memMap[x.name];
+        return m && x.role !== 'leader';
+      });
+      if (swapPool.length === 0) continue;
+
+      swapPool.sort((a, b) => (thisMonthCount[b.name] || 0) - (thisMonthCount[a.name] || 0));
+      const victim = swapPool[0];
+      if ((thisMonthCount[victim.name] || 0) < 1) continue; // 배정 이력 없으면 교체 불가
+
+      for (const team of sd.teams) {
+        const idx = team.members?.findIndex(x => x.name === victim.name) ?? -1;
+        if (idx !== -1) {
+          team.members[idx] = { name: personName, gender: person.gender, role: 'member' };
+          thisMonthCount[personName] = (thisMonthCount[personName] || 0) + 1;
+          thisMonthCount[victim.name] = Math.max(0, (thisMonthCount[victim.name] || 0) - 1);
+          adjustLog.push(`${personName} ↔ ${victim.name} 교체 (${slotLabel} ${dateLabel})`);
+          placed = true; break;
+        }
+      }
+      if (placed) break;
+    }
+  }
+
+  return { adjustLog };
+}
+
+// ── 지침 검증 및 자동 수정 ──
+function validateAndFixAssignment(resultAssignments, mems) {
+  const memMap = {};
+  for (const [id, m] of Object.entries(mems)) memMap[m.name] = { id, ...m };
+  const issues = [];
+
+  for (const [slotKey, slotData] of Object.entries(resultAssignments)) {
+    if (!slotData?.teams) continue;
+    const [sid] = slotKey.split('__');
+    const slotLabel = ASSIGN_SLOTS.find(s => s.id === sid)?.label || sid;
+
+    // 1. 중복 배정 제거 (같은 슬롯에 동일 인물)
+    const seenNames = new Set();
+    for (const team of slotData.teams) {
+      if (!team.members) continue;
+      const before = team.members.length;
+      team.members = team.members.filter(x => {
+        if (seenNames.has(x.name)) return false;
+        seenNames.add(x.name); return true;
+      });
+      if (team.members.length < before) issues.push(`중복 배정 제거: ${slotLabel}`);
+    }
+    slotData.teams = slotData.teams.filter(t => t.members && t.members.length > 0);
+
+    // 2. 잘못된 인도자 태그 수정 (canLead 아닌 형제 또는 자매)
+    for (const team of slotData.teams) {
+      for (const x of (team.members || [])) {
+        if (x.role === 'leader') {
+          const m = memMap[x.name];
+          if (!m || m.gender !== '형제' || !m.canLead) {
+            x.role = 'member';
+            issues.push(`잘못된 인도자 수정: ${x.name}`);
+          }
+        }
+      }
+    }
+
+    // 3. 인도자 없는 슬롯에 canLead 형제가 있으면 자동 지정
+    const hasLeader = slotData.teams.some(t => t.members?.some(x => x.role === 'leader'));
+    if (!hasLeader) {
+      outer3: for (const team of slotData.teams) {
+        for (const x of (team.members || [])) {
+          const m = memMap[x.name];
+          if (m?.gender === '형제' && m.canLead) {
+            x.role = 'leader';
+            issues.push(`인도자 자동 지정: ${x.name} (${slotLabel})`);
+            break outer3;
+          }
+        }
+      }
+    }
+
+    // 4. 부부가 같은 슬롯 내 다른 팀에 배정된 경우 → 같은 팀으로 통합
+    const flatMem = slotData.teams.flatMap((t, ti) =>
+      (t.members || []).map(x => ({ ...x, teamIdx: ti }))
+    );
+    const movedCouple = new Set();
+    for (const x of flatMem) {
+      if (movedCouple.has(x.name)) continue;
+      const m = memMap[x.name];
+      if (!m?.spouseId) continue;
+      const spouseEntry = Object.entries(mems).find(([id]) => id === m.spouseId);
+      if (!spouseEntry) continue;
+      const [, spouseMem] = spouseEntry;
+      const spouseInSlot = flatMem.find(y => y.name === spouseMem.name);
+      if (!spouseInSlot || spouseInSlot.teamIdx === x.teamIdx) continue;
+      const targetTeam = slotData.teams[x.teamIdx];
+      const sourceTeam = slotData.teams[spouseInSlot.teamIdx];
+      if (!targetTeam || !sourceTeam || targetTeam.members.length >= 2) continue;
+      sourceTeam.members = sourceTeam.members.filter(y => y.name !== spouseMem.name);
+      targetTeam.members.push({ name: spouseMem.name, gender: spouseMem.gender, role: 'member' });
+      movedCouple.add(x.name); movedCouple.add(spouseMem.name);
+      issues.push(`부부 팀 통합: ${x.name} + ${spouseMem.name}`);
+    }
+    slotData.teams = slotData.teams.filter(t => t.members && t.members.length > 0);
+
+    // 5. 팀 내 순서: 인도자 → 형제 → 자매
+    for (const team of slotData.teams) {
+      if (!team.members || team.members.length < 2) continue;
+      team.members.sort((a, b) => {
+        if (a.role === 'leader') return -1;
+        if (b.role === 'leader') return 1;
+        const ga = memMap[a.name]?.gender || a.gender;
+        const gb = memMap[b.name]?.gender || b.gender;
+        if (ga === '형제' && gb === '자매') return -1;
+        if (ga === '자매' && gb === '형제') return 1;
+        return 0;
+      });
+    }
+  }
+
+  return { issues };
 }
 
 // ── 탭3: 통계 ──
