@@ -2335,6 +2335,13 @@ function autoAssign(subs, mems, prevRotation, ym, prevCounts = {}) {
     }
   }
 
+  // 사람별 신청 슬롯 수 (충족률 계산용)
+  const slotsApplied = {};
+  for (const [name, d] of Object.entries(subs)) {
+    if (!d || !d.slots) continue;
+    slotsApplied[name] = d.slots.length;
+  }
+
   // 이번 달 배정 횟수 (이전 달 확정 데이터도 가중치로 반영)
   const assignCount = {};
   for (const m of Object.values(mems)) {
@@ -2368,7 +2375,7 @@ function autoAssign(subs, mems, prevRotation, ym, prevCounts = {}) {
       const [slotId] = slotKey.split('__');
       const slotDef = ASSIGN_SLOTS.find(s => s.id === slotId);
       if (!slotDef) continue;
-      const assigned = assignSlot(slotApplicants[slotKey], mems, assignCount, leaderCount, rotation, slotId, MAX_PER_SLOT);
+      const assigned = assignSlot(slotApplicants[slotKey], mems, assignCount, leaderCount, rotation, slotId, MAX_PER_SLOT, slotsApplied);
       resultAssignments[slotKey] = assigned;
       assigned.teams.forEach(team => {
         team.members?.forEach(x => {
@@ -2383,7 +2390,7 @@ function autoAssign(subs, mems, prevRotation, ym, prevCounts = {}) {
       const k1 = `sat-aft-1__${dateStr}`;
       const k8 = `sat-aft-8__${dateStr}`;
       const allApplicants = [...new Set([...(slotApplicants[k1]||[]), ...(slotApplicants[k8]||[])])];
-      const satResult = assignSatSlots(allApplicants, mems, assignCount, leaderCount, rotation, dateStr);
+      const satResult = assignSatSlots(allApplicants, mems, assignCount, leaderCount, rotation, dateStr, slotsApplied);
       if (satResult.zone1) resultAssignments[k1] = satResult.zone1;
       if (satResult.zone8) resultAssignments[k8] = satResult.zone8;
       [satResult.zone1, satResult.zone8].forEach(zone => {
@@ -2418,12 +2425,15 @@ function autoAssign(subs, mems, prevRotation, ym, prevCounts = {}) {
   return { assignments: resultAssignments, rotation, adjustLog: adjustResult.adjustLog, validationIssues: validationResult.issues };
 }
 
-function assignSlot(applicantNames, mems, assignCount, leaderCount, rotation, slotId, maxCount) {
+function assignSlot(applicantNames, mems, assignCount, leaderCount, rotation, slotId, maxCount, slotsApplied = {}) {
   const memMap = {};
   for (const [id, m] of Object.entries(mems)) memMap[m.name] = { id, ...m };
 
   // 후보 목록
   let candidates = applicantNames.map(n => memMap[n]).filter(Boolean);
+
+  // 충족률: 배정 횟수 / 신청 횟수 (낮을수록 우선순위 높음)
+  const fillRate = (name) => (assignCount[name] || 0) / Math.max(1, slotsApplied[name] || 1);
 
   // 공평성 보정: priorityNext에 있는 사람 먼저
   const priority = rotation.priorityNext || [];
@@ -2431,7 +2441,7 @@ function assignSlot(applicantNames, mems, assignCount, leaderCount, rotation, sl
     const pa = priority.includes(a.name) ? 0 : 1;
     const pb = priority.includes(b.name) ? 0 : 1;
     if (pa !== pb) return pa - pb;
-    return (assignCount[a.name] || 0) - (assignCount[b.name] || 0);
+    return fillRate(a.name) - fillRate(b.name);
   });
 
   // 인도자 배정 — 이번 달 인도 횟수 적은 순 우선, 동순위면 로테이션
@@ -2441,7 +2451,7 @@ function assignSlot(applicantNames, mems, assignCount, leaderCount, rotation, sl
     leaderCandidates.sort((a, b) => {
       const laDiff = (leaderCount[a.name]||0) - (leaderCount[b.name]||0);
       if (laDiff !== 0) return laDiff;
-      return (assignCount[a.name]||0) - (assignCount[b.name]||0);
+      return fillRate(a.name) - fillRate(b.name);
     });
     const minLeader = leaderCount[leaderCandidates[0].name] || 0;
     const tied = leaderCandidates.filter(c => (leaderCount[c.name]||0) === minLeader);
@@ -2454,13 +2464,13 @@ function assignSlot(applicantNames, mems, assignCount, leaderCount, rotation, sl
 
   // 나머지 배정 (인도자 제외)
   const remaining = candidates.filter(c => c.name !== leader?.name);
-  // 우선순위: 이전 달 0회 배정자(priorityNext) → 파이오니아 → 배정 횟수 적은 순 → 랜덤
+  // 우선순위: 이전 달 0회 배정자(priorityNext) → 파이오니아 → 충족률 낮은 순 → 랜덤
   remaining.sort((a, b) => {
     const pa = priority.includes(a.name) ? 0 : 1;
     const pb = priority.includes(b.name) ? 0 : 1;
     if (pa !== pb) return pa - pb;
     if (a.isPioneer !== b.isPioneer) return a.isPioneer ? -1 : 1;
-    const diff = (assignCount[a.name]||0) - (assignCount[b.name]||0);
+    const diff = fillRate(a.name) - fillRate(b.name);
     if (diff !== 0) return diff;
     return Math.random() - 0.5;
   });
@@ -2472,11 +2482,14 @@ function assignSlot(applicantNames, mems, assignCount, leaderCount, rotation, sl
   return { teams };
 }
 
-function assignSatSlots(applicantNames, mems, assignCount, leaderCount, rotation, dateStr) {
+function assignSatSlots(applicantNames, mems, assignCount, leaderCount, rotation, dateStr, slotsApplied = {}) {
   const memMap = {};
   for (const [id, m] of Object.entries(mems)) memMap[m.name] = { id, ...m };
   const candidates = applicantNames.map(n => memMap[n]).filter(Boolean);
   const priority = rotation.priorityNext || [];
+
+  // 충족률: 배정 횟수 / 신청 횟수 (낮을수록 우선순위 높음)
+  const fillRate = (name) => (assignCount[name] || 0) / Math.max(1, slotsApplied[name] || 1);
 
   // 인도자 배정 (1공구, 8공구 각각) — 이번 달 인도 횟수 적은 순 우선
   const leaderCandidates = candidates.filter(c => c.gender === '형제' && c.canLead);
@@ -2486,7 +2499,7 @@ function assignSatSlots(applicantNames, mems, assignCount, leaderCount, rotation
     const pa = priority.includes(a.name) ? 0 : 1;
     const pb = priority.includes(b.name) ? 0 : 1;
     if (pa !== pb) return pa - pb;
-    return (assignCount[a.name]||0) - (assignCount[b.name]||0);
+    return fillRate(a.name) - fillRate(b.name);
   });
 
   let leader1 = null, leader8 = null;
@@ -2551,14 +2564,14 @@ function assignSatSlots(applicantNames, mems, assignCount, leaderCount, rotation
     usedNames.add(couple.b.name);
   }
 
-  // 나머지 개인 신청자: 이전 달 0회 배정자 → 파이오니아 → 배정 횟수 적은 순
+  // 나머지 개인 신청자: 이전 달 0회 배정자 → 파이오니아 → 충족률 낮은 순
   const remainingSingles = [...solos, ...singles.filter(s => !usedNames.has(s.name))];
   remainingSingles.sort((a, b) => {
     const pa = priority.includes(a.name) ? 0 : 1;
     const pb = priority.includes(b.name) ? 0 : 1;
     if (pa !== pb) return pa - pb;
     if (a.isPioneer !== b.isPioneer) return a.isPioneer ? -1 : 1;
-    return (assignCount[a.name]||0) - (assignCount[b.name]||0);
+    return fillRate(a.name) - fillRate(b.name);
   });
 
   for (const m of remainingSingles) {
