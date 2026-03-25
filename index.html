@@ -2978,34 +2978,25 @@ async function renderStatsTab(ym) {
     </div>
   `;
 
-  // 신청 현황
+  // 신청·배정 현황 통합 테이블 (신청 횟수 많은 순)
   html += `<div class="card" style="margin-bottom:14px">
-    <div class="card-header">📋 신청 횟수 (많은 순)</div>
-    <table class="stat-table"><thead><tr><th>이름</th><th>성별</th><th>신청 횟수</th></tr></thead><tbody>`;
+    <div class="card-header">📋 신청 / 🎯 배정 현황 (신청 많은 순)</div>
+    <table class="stat-table"><thead><tr><th>이름</th><th>성별</th><th style="text-align:center">신청</th><th style="text-align:center">배정</th><th style="text-align:center">충족률</th></tr></thead><tbody>`;
   for (const m of sortedBySub) {
-    const cnt = subCount[m.name] || 0;
-    const pct = Math.round(cnt/maxSub*100);
+    const sub = subCount[m.name] || 0;
+    const asn = asnCount[m.name] || 0;
+    const subPct = Math.round(sub/maxSub*100);
+    const asnPct = Math.round(asn/maxSub*100);
+    const fillPct = sub > 0 ? Math.round(asn/sub*100) : null;
+    const fillColor = fillPct === null ? '#a0aec0' : fillPct >= 70 ? '#38a169' : fillPct >= 40 ? '#ed8936' : '#e53e3e';
     const gc = m.gender==='형제'?'badge-b':'badge-s';
-    html += `<tr style="${cnt===0?'opacity:.5':''}">
+    const dim = sub===0 ? 'opacity:.45' : '';
+    html += `<tr style="${dim}">
       <td style="font-weight:700">${m.name}</td>
       <td><span class="badge ${gc}">${m.gender}</span></td>
-      <td>${cnt}회<div class="bar-wrap"><div class="bar-fill" style="width:${pct}%"></div></div></td>
-    </tr>`;
-  }
-  html += `</tbody></table></div>`;
-
-  // 배정 현황
-  html += `<div class="card" style="margin-bottom:14px">
-    <div class="card-header">🎯 배정 횟수 (많은 순)</div>
-    <table class="stat-table"><thead><tr><th>이름</th><th>성별</th><th>배정 횟수</th></tr></thead><tbody>`;
-  for (const m of sortedByAsn) {
-    const cnt = asnCount[m.name] || 0;
-    const pct = Math.round(cnt/maxAsn*100);
-    const gc = m.gender==='형제'?'badge-b':'badge-s';
-    html += `<tr style="${cnt===0?'opacity:.5':''}">
-      <td style="font-weight:700">${m.name}</td>
-      <td><span class="badge ${gc}">${m.gender}</span></td>
-      <td>${cnt}회<div class="bar-wrap"><div class="bar-fill" style="width:${pct}%"></div></div></td>
+      <td style="text-align:center;min-width:60px">${sub}회<div class="bar-wrap"><div class="bar-fill" style="width:${subPct}%;background:#a0aec0"></div></div></td>
+      <td style="text-align:center;min-width:60px">${asn}회<div class="bar-wrap"><div class="bar-fill" style="width:${asnPct}%"></div></div></td>
+      <td style="text-align:center;font-weight:700;color:${fillColor}">${fillPct !== null ? fillPct+'%' : '-'}</td>
     </tr>`;
   }
   html += `</tbody></table></div>`;
