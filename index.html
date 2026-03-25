@@ -1783,13 +1783,13 @@ function renderAssignCalendar(asgn, ym) {
       (new Date(monStr) - new Date(firstMon)) / (7 * 86400000)
     ) + 1;
 
-    // 이 주에서 실제 배정된 슬롯의 최대 팀 수
-    const maxTeams = Math.max(3, ...FIXED_COLS.map((col, ci) => {
+    // 이 주에서 실제 배정된 슬롯의 최대 팀 수 (3팀 상한)
+    const MAX_TEAMS = Math.floor(MAX_PER_SLOT / 2);
+    const maxTeams = Math.min(MAX_TEAMS, Math.max(0, ...FIXED_COLS.map((col, ci) => {
       const sk = `${col.id}__${colDates[ci]}`;
       return asgn[sk]?.teams?.length || 0;
-    }));
+    })));
     // 수동 수정 모드에서는 팀 추가를 위해 행 하나 더 표시 (최대 팀 수 초과 불가)
-    const MAX_TEAMS = Math.floor(MAX_PER_SLOT / 2);
     const displayMaxTeams = assignEditMode ? Math.min(maxTeams + 1, MAX_TEAMS) : maxTeams;
 
     html += `<div class="result-week-section">
