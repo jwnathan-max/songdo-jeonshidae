@@ -603,6 +603,13 @@ input:focus,select:focus{border-color:#5a67d8;box-shadow:0 0 0 3px rgba(90,103,2
       </div>
     </div>
     <div class="form-row">
+      <label>참여 승인 여부</label>
+      <div class="toggle-group">
+        <div class="toggle-item on" id="tApproved" onclick="toggleField('approved')">승인</div>
+        <div class="toggle-item" id="tNotApproved" onclick="toggleField('notApproved')">미승인(로그인 차단)</div>
+      </div>
+    </div>
+    <div class="form-row">
       <label>배우자 (부부 연결)</label>
       <select id="mSpouse">
         <option value="">없음</option>
@@ -689,6 +696,7 @@ let editingMemberIdx = null;// 수정 중인 멤버 인덱스
 let editingMemberId = null;
 let modalCanLead = false;
 let modalIsPioneer = false;
+let modalApproved = true;
 // 실시간 리스너 (봉사자용 - 확정 데이터)
 let confirmedListenerRef = null;
 let confirmedListenerCb  = null;
@@ -821,6 +829,7 @@ async function loginVolunteer() {
   if (!name) { showError('이름을 입력해주세요.'); return; }
   const found = findMemberByName(name);
   if (!found) { showError('등록되지 않은 봉사자입니다.\n관리자에게 문의하세요.'); return; }
+  if (found[1].approved === false) { showError('이번 기간에는 참여자로 승인되지 않았습니다.\n관리자에게 문의하세요.'); return; }
   loginPendingMember = { id: found[0], ...found[1] };
 
   const pinSnap = await db.ref(`memberPins/${found[0]}`).get();
@@ -1356,8 +1365,16 @@ function renderVolSlots(ym) {
   const daysInMonth = new Date(y, m, 0).getDate();
   const firstDow = new Date(y, m - 1, 1).getDay(); // 1일의 요일
 
+  // 전시대봉사 장소/시간 안내
+  let html = `<div style="background:#f7fafc;border:1px solid #e2e8f0;border-radius:12px;padding:12px 14px;margin-bottom:14px;font-size:.88em;line-height:1.6;color:#2d3748">
+    <div style="font-weight:700;margin-bottom:6px;color:#4a5568">📍 전시대봉사 장소 · 시간</div>
+    <div>• 평일 저녁 <b>7시</b> — 1공구 학원가</div>
+    <div>• 금요일 새벽 <b>7시</b> — 인천대입구역</div>
+    <div>• 토요일 오후 <b>2시</b> — 1공구 안스베이커링 앞 / 8공구 올리브영 앞</div>
+  </div>`;
+
   // 요일 헤더
-  let html = '<div class="cal-wrap"><div class="cal-grid">';
+  html += '<div class="cal-wrap"><div class="cal-grid">';
   ['일','월','화','수','목','금','토'].forEach(d => {
     html += `<div class="cal-dow">${d}</div>`;
   });
@@ -3091,9 +3108,14 @@ function renderMembersTab() {
   for (const [id, m] of memberList) {
     const gc = m.gender === '형제' ? 'badge-b' : 'badge-s';
     const spouseName = m.spouseId ? (members[m.spouseId]?.name || '?') : null;
-    html += `<div class="member-row">
+    const approved = m.approved !== false;
+    const approvalBadge = approved
+      ? `<span class="badge" style="background:#c6f6d5;color:#22543d;cursor:pointer" onclick="toggleMemberApproval('${id}')" title="클릭하여 미승인으로 변경">✅승인</span>`
+      : `<span class="badge" style="background:#fed7d7;color:#822727;cursor:pointer" onclick="toggleMemberApproval('${id}')" title="클릭하여 승인으로 변경">🚫미승인</span>`;
+    html += `<div class="member-row"${approved ? '' : ' style="opacity:.6"'}>
       <div class="member-name">${m.name}</div>
       <div class="member-tags">
+        ${approvalBadge}
         <span class="badge ${gc}">${m.gender}</span>
         ${m.canLead ? '<span class="badge badge-g">인도가능</span>' : ''}
         ${m.isPioneer ? '<span class="badge badge-y">파이오니아</span>' : ''}
@@ -3133,12 +3155,14 @@ function openMemberModal(memberId) {
     document.querySelector(`input[name=mGender][value="${m.gender}"]`).checked = true;
     modalCanLead = m.canLead || false;
     modalIsPioneer = m.isPioneer || false;
+    modalApproved = m.approved !== false;
     spouseSelect.value = m.spouseId || '';
   } else {
     document.getElementById('mName').value = '';
     document.querySelector('input[name=mGender][value="형제"]').checked = true;
     modalCanLead = false;
     modalIsPioneer = false;
+    modalApproved = true;
     spouseSelect.value = '';
   }
   updateToggleUI();
@@ -3149,6 +3173,8 @@ function updateToggleUI() {
   document.getElementById('tCannotLead').classList.toggle('on', !modalCanLead);
   document.getElementById('tIsPioneer').classList.toggle('on', modalIsPioneer);
   document.getElementById('tNotPioneer').classList.toggle('on', !modalIsPioneer);
+  document.getElementById('tApproved').classList.toggle('on', modalApproved);
+  document.getElementById('tNotApproved').classList.toggle('on', !modalApproved);
 }
 
 function toggleField(field) {
@@ -3156,6 +3182,8 @@ function toggleField(field) {
   else if (field === 'cannotLead') { modalCanLead = false; }
   else if (field === 'pioneer') { modalIsPioneer = true; }
   else if (field === 'notPioneer') { modalIsPioneer = false; }
+  else if (field === 'approved') { modalApproved = true; }
+  else if (field === 'notApproved') { modalApproved = false; }
   updateToggleUI();
 }
 
@@ -3174,7 +3202,7 @@ async function saveMember() {
   const gender = document.querySelector('input[name=mGender]:checked').value;
   const spouseId = document.getElementById('mSpouse').value || null;
 
-  const data = { name, gender, canLead: modalCanLead, isPioneer: modalIsPioneer, spouseId };
+  const data = { name, gender, canLead: modalCanLead, isPioneer: modalIsPioneer, approved: modalApproved, spouseId };
 
   const updates = {};
   let targetId = editingMemberId;
@@ -3205,6 +3233,15 @@ async function saveMember() {
   await db.ref().update(updates);
   await loadMembers();
   closeMemberModal();
+  renderMembersTab();
+}
+
+async function toggleMemberApproval(id) {
+  const m = members[id];
+  if (!m) return;
+  const nextApproved = m.approved === false ? true : false;
+  await db.ref(`members/${id}/approved`).set(nextApproved);
+  members[id].approved = nextApproved;
   renderMembersTab();
 }
 
